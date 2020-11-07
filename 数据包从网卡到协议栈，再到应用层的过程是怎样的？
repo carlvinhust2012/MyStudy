@@ -1,0 +1,233 @@
+数据包从网卡到协议栈，再到应用层的过程是怎样的？
+
+从网卡到内存
+1： 数据包从外面的网络进入物理网卡，如果目的地址不是该网卡，且该网卡没有开启混杂模式，该包会被网卡丢弃。
+2： 网卡将数据包通过DMA的方式写入到指定的内存地址，该地址由网卡驱动分配并初始化。注： 老的网卡可能不支持DMA，不过新的网卡一般都支持。
+3： 网卡通过硬件中断（IRQ）通知CPU，告诉它有数据来了
+4： CPU根据中断表，调用已经注册的中断函数，这个中断函数会调到驱动程序（NIC Driver）中相应的函数
+5： 驱动先禁用网卡的中断，表示驱动程序已经知道内存中有数据了，告诉网卡下次再收到数据包直接写内存就可以了，不要再通知CPU了，这样可以提高效率，
+    避免CPU不停的被中断。
+6： 启动软中断。这步结束后，硬件中断处理函数就结束返回了。由于硬中断处理程序执行的过程中不能被中断，所以如果它执行时间过长，
+    会导致CPU没法响应其它硬件的中断，于是内核引入软中断，这样可以将硬中断处理函数中耗时的部分移到软中断处理函数里面来慢慢处理。
+
+                   +-----+
+                   |     |                            Memroy
++--------+   1     |     |  2  DMA     +--------+--------+--------+--------+
+| Packet |-------->| NIC |------------>| Packet | Packet | Packet | ...... |
++--------+         |     |             +--------+--------+--------+--------+
+                   |     |<--------+
+                   +-----+         |
+                      |            +---------------+
+                      |                            |
+                    3 | Raise IRQ                  | Disable IRQ
+                      |                          5 |
+                      |                            |
+                      ↓                            |
+                   +-----+                   +------------+
+                   |     |  Run IRQ handler  |            |
+                   | CPU |------------------>| NIC Driver |
+                   |     |       4           |            |
+                   +-----+                   +------------+
+                                                   |
+                                                6  | Raise soft IRQ
+                                                   |
+                                                   ↓
+
+内存-网络模块-协议栈
+RPS实现了数据流的hash归类，并把软中断的负载均衡分到各个cpu。
+7： 内核中的ksoftirqd进程专门负责软中断的处理，当它收到软中断后，就会调用相应软中断所对应的处理函数，对于上面第6步中是网卡驱动模块抛出的软中断，
+    ksoftirqd会调用网络模块的net_rx_action函数。
+8： net_rx_action调用网卡驱动里的poll函数来一个一个的处理数据包。
+9： 在pool函数中，驱动会一个接一个的读取网卡写到内存中的数据包，内存中数据包的格式只有驱动知道。
+10： 驱动程序将内存中的数据包转换成内核网络模块能识别的skb格式，然后调用napi_gro_receive函数
+11： napi_gro_receive会处理GRO相关的内容，也就是将可以合并的数据包进行合并，这样就只需要调用一次协议栈。
+     然后判断是否开启了RPS，如果开启了，将会调用enqueue_to_backlog
+12： 在enqueue_to_backlog函数中，会将数据包放入CPU的softnet_data结构体的input_pkt_queue中，然后返回，如果input_pkt_queue满了的话，
+     该数据包将会被丢弃，queue的大小可以通过net.core.netdev_max_backlog来配置
+13： CPU会接着在自己的软中断上下文中处理自己input_pkt_queue里的网络数据（调用__netif_receive_skb_core）
+14： 如果没开启RPS，napi_gro_receive会直接调用__netif_receive_skb_core
+15： 看是不是有AF_PACKET类型的socket（也就是我们常说的原始套接字），如果有的话，拷贝一份数据给它。tcpdump抓包就是抓的这里的包。
+16： 调用协议栈相应的函数，将数据包交给协议栈处理。
+17： 待内存中的所有数据包被处理完成后（即poll函数执行完成），启用网卡的硬中断，这样下次网卡再收到数据的时候就会通知CPU。
+                                                     +-----+
+                                             17      |     |
+                                        +----------->| NIC |
+                                        |            |     |
+                                        |Enable IRQ  +-----+
+                                        |
+                                        |
+                                  +------------+                                      Memroy
+                                  |            |        Read           +--------+--------+--------+--------+
+                 +--------------->| NIC Driver |<--------------------- | Packet | Packet | Packet | ...... |
+                 |                |            |          9            +--------+--------+--------+--------+
+                 |                +------------+
+                 |                      |    |        skb
+            Poll | 8      Raise softIRQ | 6  +-----------------+
+                 |                      |             10       |
+                 |                      ↓                      ↓
+         +---------------+  Call  +-----------+        +------------------+        +--------------------+  12  +---------------------+
+         | net_rx_action |<-------| ksoftirqd |        | napi_gro_receive |------->| enqueue_to_backlog |----->| CPU input_pkt_queue |
+         +---------------+   7    +-----------+        +------------------+   11   +--------------------+      +---------------------+
+                                                               |                                                      | 13
+                                                            14 |        + - - - - - - - - - - - - - - - - - - - - - - +
+                                                               ↓        ↓
+                                                    +--------------------------+    15      +------------------------+
+                                                    | __netif_receive_skb_core |----------->| packet taps(AF_PACKET) |
+                                                    +--------------------------+            +------------------------+
+                                                               |
+                                                               | 16
+                                                               ↓
+                                                      +-----------------+
+                                                      | protocol layers |
+                                                      +-----------------+
+
+下面，数据包将交给相应的协议栈函数处理，进入第三层网络层。
+
+1. IP 层的入口函数在 ip_rcv 函数。该函数首先会做包括 package checksum 在内的各种检查，如果需要的话会做 IP defragment（将多个分片合并），
+   然后 packet 调用已经注册的 Pre-routing netfilter hook ，完成后最终到达 ip_rcv_finish 函数。
+2. ip_rcv_finish 函数会调用 ip_router_input 函数，进入路由处理环节。它首先会调用 ip_route_input 来更新路由，然后查找 route，决定该 package 将
+   会被发到本机还是会被转发还是丢弃：
+   如果是发到本机的话，调用 ip_local_deliver 函数，可能会做 de-fragment（合并多个 IP packet），然后调用 ip_local_deliver 函数。该函数根据 
+   package 的下一个处理层的 protocal number，调用下一层接口，包括 tcp_v4_rcv （TCP）, udp_rcv （UDP），icmp_rcv (ICMP)，igmp_rcv(IGMP)。
+   对于 TCP 来说，函数 tcp_v4_rcv 函数会被调用，从而处理流程进入 TCP 栈。
+   如果需要转发 （forward），则进入转发流程。该流程需要处理 TTL，再调用 dst_input 函数，该函数会
+（1）处理 Netfilter Hook
+（2）执行 IP fragmentation
+（3）调用 dev_queue_xmit，进入链路层处理流程。
+
+          |
+          |
+          ↓         promiscuous mode &&
+      +--------+    PACKET_OTHERHOST (set by driver)   +-----------------+
+      | ip_rcv |-------------------------------------->| drop this packet|
+      +--------+                                       +-----------------+
+          |
+          |
+          ↓
++---------------------+
+| NF_INET_PRE_ROUTING |
++---------------------+
+          |
+          |
+          ↓
+      +---------+
+      |         | enabled ip forword  +------------+        +----------------+
+      | routing |-------------------->| ip_forward |------->| NF_INET_FORWARD |
+      |         |                     +------------+        +----------------+
+      +---------+                                                   |
+          |                                                         |
+          | destination IP is local                                 ↓
+          ↓                                                 +---------------+
+ +------------------+                                       | dst_output_sk |
+ | ip_local_deliver |                                       +---------------+
+ +------------------+
+          |
+          |
+          ↓
+ +------------------+
+ | NF_INET_LOCAL_IN |
+ +------------------+
+          |
+          |
+          ↓
+ +--------------------+
+ | tcp_v4_rcv （TCP） |
+ +--------------------+
+
+在上图中，
+1. ip_rcv： ip_rcv函数是IP模块的入口函数，在该函数里面，第一件事就是将垃圾数据包（目的mac地址不是当前网卡，但由于网卡设置了混杂模式而被接收进来）
+   直接丢掉，然后调用注册在NF_INET_PRE_ROUTING上的函数
+2. NF_INET_PRE_ROUTING： netfilter放在协议栈中的钩子，可以通过iptables来注入一些数据包处理函数，用来修改或者丢弃数据包，如果数据包没被丢弃，
+   将继续往下走
+3. routing： 进行路由，如果是目的IP不是本地IP，且没有开启ip forward功能，那么数据包将被丢弃，如果开启了ip forward功能，那将进入ip_forward函数
+4. ip_forward： ip_forward会先调用netfilter注册的NF_INET_FORWARD相关函数，如果数据包没有被丢弃，那么将继续往后调用dst_output_sk函数
+5. dst_output_sk： 该函数会调用IP层的相应函数将该数据包发送出去，同下一篇要介绍的数据包发送流程的后半部分一样。
+6. ip_local_deliver：如果上面routing的时候发现目的IP是本地IP，那么将会调用该函数，在该函数中，会先调用NF_INET_LOCAL_IN相关的钩子程序，如果通过，
+   数据包将会向下发送到传输层
+
+传输层
+1. 传输层 TCP包的 处理入口在 tcp_v4_rcv 函数（位于 linux/net/ipv4/tcp ipv4.c 文件中），它会做 TCP header 检查等处理。
+2. 调用 _tcp_v4_lookup，查找该 package 的 open socket。如果找不到，该 package 会被丢弃。接下来检查 socket 和 connection 的状态。
+3. 如果socket 和 connection 一切正常，调用 tcp_prequeue 使 package 从内核进入 user space，放进 socket 的 receive queue。然后 socket 会被唤醒，
+   调用 system call，并最终调用 tcp_recvmsg 函数去从 socket recieve queue 中获取 segment。
+
+应用层
+1. 每当用户应用调用 read 或者 recvfrom 时，该调用会被映射为/net/socket.c 中的 sys_recv 系统调用，并被转化为 sys_recvfrom 调用，
+   然后调用 sock_recgmsg 函数。
+2. 对于 INET 类型的 socket，/net/ipv4/af inet.c 中的 inet_recvmsg 方法会被调用，它会调用相关协议的数据接收方法。
+3. 对 TCP 来说，调用 tcp_recvmsg。该函数从 socket buffer 中拷贝数据到 user buffer。
+4. 对 UDP 来说，从 user space 中可以调用三个 system call recv()/recvfrom()/recvmsg() 中的任意一个来接收 UDP package，
+   这些系统调用最终都会调用内核中的 udp_recvmsg 方法。
+
+Socket层
+1. socket 位于传输层协议之上，屏蔽了不同网络协议之间的差异
+2. socket 是网络编程的入口，它提供了大量的系统调用，构成了网络程序的主体
+3. 在Linux系统中，socket 属于文件系统的一部分，网络通信可以被看作是对文件的读取，使得我们对网络的控制和对文件的控制一样方便
+
+nginx处理socket套接字的流程
+1. nginx解析用户配置，在所有端口创建socket并启动监听。
+2. nginx解析配置文件是由各个模块分担处理的，每个模块注册并处理自己关心的配置，通过模块结构体ngx_module_t的字段ngx_command_t *commands实现。
+3. main方法会调用ngx_init_cycle，其完成了服务器初始化的大部分工作，其中就包括启动监听（ngx_open_listening_sockets）
+4. 假设nginx使用epoll处理所有socket事件，ngx_event_core_module模块是事件处理核心模块，初始化此模块时会执行ngx_event_process_init函数，
+   包括将监听事件添加到epoll
+5. 结构体ngx_connection_t存储socket连接相关信息；nginx预先创建若干个ngx_connection_t对象，存储在全局变量ngx_cycle->free_connections，
+   称之为连接池；当新生成socket时，会尝试从连接池中获取空闲connection连接，如果获取失败，则会直接关闭此socket。指令worker_connections用于配置
+   连接池最大连接数目，配置在events指令块中，由ngx_event_core_module解析
+6. 结构体ngx_http_request_t存储整个HTTP请求处理流程所需的所有信息，字段非常多
+7. ngx_http_request.c文件中定义了所有的HTTP头部，存储在ngx_http_headers_in数组，数组的每个元素是一个ngx_http_header_t结构体，解析后的请求头信息
+   都存储在ngx_http_headers_in_t结构体中
+8. 从ngx_http_headers_in数组中查找请求头对应ngx_http_header_t对象时，需要遍历，每个元素都需要进行字符串比较，效率低下。
+   因此nginx将ngx_http_headers_in数组转换为哈希表，哈希表的键即为请求头的key，方法ngx_http_init_headers_in_hash实现了数组到哈希表的转换
+9. 在创建socket启动监听时，会添加可读事件到epoll，事件处理函数为ngx_event_accept，用于接收socket连接，分配connection连接，并调用ngx_listening_t
+   对象的处理函数（ngx_http_init_connection）
+10. socket连接成功后，nginx会等待客户端发送HTTP请求，默认会有60秒的超时时间，即60秒内没有接收到客户端请求时，断开此连接，打印错误日志。
+   函数ngx_http_init_connection用于设置读事件处理函数，以及超时定时器。
+11. 函数ngx_http_wait_request_handler为解析HTTP请求的入口函数
+12. 函数ngx_http_create_request创建并初始化ngx_http_request_t对象
+13. 解析完成请求行与请求头，nginx就开始处理HTTP请求，并没有等到解析完请求体再处理。处理请求入口为ngx_http_process_request。
+
+下面进入nginx http请求处理的11个阶段
+绝大多数HTTP模块都会将自己的handler添加到某个阶段（将handler添加到全局唯一的数组ngx_http_phases中），注意其中有4个阶段不能添加自定义handler，
+nginx处理HTTP请求时会挨个调用每个阶段的handler
+typedef enum {
+    NGX_HTTP_POST_READ_PHASE = 0, // 第一个阶段，目前只有realip模块会注册handler，但是该模块默认不会运行（nginx作为代理服务器时有用，
+                                  // 后端以此获取客户端原始ip）
+                                  
+    NGX_HTTP_SERVER_REWRITE_PHASE, // server块中配置了rewrite指令，重写url
+    NGX_HTTP_FIND_CONFIG_PHASE,   // 查找匹配的location配置；不能自定义handler；
+    NGX_HTTP_REWRITE_PHASE,       // location块中配置了rewrite指令，重写url
+    NGX_HTTP_POST_REWRITE_PHASE,  // 检查是否发生了url重写，如果有，重新回到FIND_CONFIG阶段；不能自定义handler；
+  
+    NGX_HTTP_PREACCESS_PHASE,     // 访问控制，比如限流模块会注册handler到此阶段
+  
+    NGX_HTTP_ACCESS_PHASE,        // 访问权限控制，比如基于ip黑白名单的权限控制，基于用户名密码的权限控制等
+    NGX_HTTP_POST_ACCESS_PHASE,   // 根据访问权限控制阶段做相应处理；不能自定义handler；
+  
+    NGX_HTTP_TRY_FILES_PHASE,     // 只有配置了try_files指令，才会有此阶段；不能自定义handler；
+    NGX_HTTP_CONTENT_PHASE,       // 内容产生阶段，返回响应给客户端
+  
+    NGX_HTTP_LOG_PHASE            // 日志记录
+} ngx_http_phases;
+
+1. nginx 在ngx_http_block函数中初始化11个阶段的ngx_http_phases数组，把http模块注册到相应的阶段去。注意多个模块可能注册到同一个阶段，
+   因此phases是一个二维数组
+
+2. nginx使用结构体ngx_module_s表示一个模块，其中字段ctx，是一个指向模块上下文结构体的指针（上下文结构体的字段都是一些函数指针）
+   postconfiguration，负责注册本模块的handler到某个处理阶段
+3. 使用GDB调试，断点到ngx_http_block方法执行所有HTTP模块注册handler之后，打印phases数组：
+
+p cmcf->phases[*].handlers
+p *(ngx_http_handler_pt*)cmcf->phases[*].handlers.elts
+
+处理请求的过程
+1. HTTP请求的处理入口函数是ngx_http_process_request，其主要调用ngx_http_core_run_phases实现11个阶段的执行流程
+2. ngx_http_core_run_phases遍历预先设置好的cmcf->phase_engine.handlers数组，调用其checker函数
+   checker内部就是调用handler，并设置下一步要执行handler的索引
+   所以综上看来，nginx处理请求的过程可以归纳为：
+
+1) 初始化 HTTP Request（读取来自客户端的数据，生成 HTTP Request 对象，该对象含有该请求所有的信息）。
+2) 处理请求头。
+3) 处理请求体。
+4) 如果有的话，调用与此请求（URL 或者 Location）关联的 handler。
+5) 依次调用各 phase handler 进行处理。
+

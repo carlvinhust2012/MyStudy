@@ -1,0 +1,2 @@
+jdbc操作数据库过于繁琐，所以有了hibernate，hibernate过于笨重，所以有了轻量级的mybatis，mybatis手写SQL比较麻烦，所以有了mapper、maybatis plus。
+structs2浪费资源，所以有了单例的springMVC

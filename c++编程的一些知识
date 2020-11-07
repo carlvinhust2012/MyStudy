@@ -1,0 +1,88 @@
+1. C++的多态是如何实现的？
+2. C++多线程，线程池如何实现？内存池如何实现？
+3. C++高并发
+4. STL中的map、unorder_map如何实现的？
+5. 智能指针（shared_ptr、unique_ptr、weaked_ptr）如何实现内存管理？
+
+// 关于shared_ptr的使用
+#include <iostream>
+#include <memory>
+void foo(std::shared_ptr<int> i)
+{
+    (*i)++;
+}
+
+int main()
+{
+    // auto pointer = new int(10); // illegal, no direct assignment
+    // Constructed a std::shared_ptr
+    auto pointer = std::make_shared<int>(10);
+    foo(pointer);
+    std::cout << *pointer << std::endl; // 11
+    // The shared_ptr will be destructed before leaving the scope
+    return 0;
+}
+
+// 执行结果
+[Running] cd "d:\CodeTrainning\leetcode\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\CodeTrainning\leetcode\"tempCodeRunnerFile
+11
+
+[Done] exited with code=0 in 1.09 seconds
+
+6. 函数使用参数列表初始化变量和函数内部初始化变量有无差别？
+(1) 初始化类的成员有两种方式，一是使用初始化列表，二是在构造函数体内进行赋值操作。使用初始化列表主要是基于性能问题，对于内置类型，如int, float等，
+使用初始化类表和在构造函数体内初始化差别不是很大，但是对于类类型来说，最好使用初始化列表，为什么呢？由上面的测试可知，使用初始化列表少了一次调用
+默认构造函数的过程，这对于数据密集型的类来说，是非常高效的。
+(2) 除了性能问题之外，有些时场合初始化列表是不可或缺的，以下几种情况时必须使用初始化列表:
+1) 常量成员，因为常量只能初始化不能赋值，所以必须放在初始化列表里面
+2) 引用类型，引用必须在定义的时候初始化，并且不能重新赋值，所以也要写在初始化列表里面
+3) 没有默认构造函数的类类型，因为使用初始化列表可以不必调用默认构造函数来初始化，而是直接调用拷贝构造函数初始化。
+
+
+7. 前++（--） 和 后++（--）的区别
+编程的时候应该尽可能使用递增操作符 ++ 和递减操作符 -- 的前缀形式.因为它少创建两个临时对象,效率比较高.
+还是从代码来分析吧,比较有说服力:)
+
+下面是 ++ 和 -- 的前缀实现形式:
+T& T::operator++(){                     T& T::operator--(){
+    ++*this;                                --*this;
+    return *this;                           return *this;
+}                                       }
+
+下面是 ++ 和 -- 的后缀实现形式:
+T T::operator++(int){                   T T::operator--(int){
+    T old(*this);                           T old(*this);
+    ++*this;                                --*this;
+    return old;                             return old;
+}                                       }
+
+我们来分析一下自增自减的后缀形式所多花费的开销:
+    T old(*this);
+这一句产生一个类型为T的临时对象 old, 并用原值*this进行初始化.当函数return的时候,又再次创建一个临时对象,并用old的值进行初始,之后,局部变量old被销毁.并用临时创建的变量对赋值符左边的变量进行赋值(如果有的话).赋值后,临时变量再次被销毁.
+    而前缀形式的自增自减呢?首先函数内没有创建临时变量,故这方面的开销就节省了.其次,返回的是一个引用,故也节省了这时候创建销毁临时对象的开销.
+    因此后缀式的自增自减,所多花费的开销是两次临时变量的创建,以及两次临时变量的销毁.如果自增自减的对象不是内建的数据类型,而一个类类型[当然,你首先得重载自增自减操作符:) ], 那么这个开销可能会比较大.因为变成了两次构造函数以及两次析构函数的调用.
+    所以在调用代码的时候,要优先使用前缀形式,除非确实需要后缀形式返回原值.
+
+参考书籍: C++ 编程规范
+    作者: Herb Sutter
+          Andrei Alexandrescu 
+
+6. 一行代码获得数组元素的个数：
+#include <iostream> 
+using namespace std;
+
+int main() {
+    int i;
+    int a[] = {1, 2, 3, 4, 5};
+    for (i = 0; a[i] != '\0'; i++); 
+    int count = sizeof(a)/sizeof(int);
+    cout <<"the count is:" << count <<"\nthe i is:"<< i <<endl;    
+    return 1;
+}
+
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+the count is:5
+the i is:5
+
+[Done] exited with code=1 in 0.538 seconds
+

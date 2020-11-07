@@ -1,0 +1,394 @@
+/*
+* 多态分为2种：静态多态、动态多态
+* 静态多态：函数的重载、运算符重载， 函数的地址在编译时就确定的，地址是早绑定
+* 动态多态：函数地址在运行时才确定，地址是晚绑定
+* 如何实现动态多态？ 1.有继承关系；2.子类重写基类虚函数；3.基类的指针或引用指向子类对象
+* 重写？ 函数返回值+函数名称+函数形参列表完全相同
+*/
+
+#include<iostream>
+using namespace std;
+
+// 基类
+class Animal{
+public:
+    void speak() {
+        cout << "动物在说话" <<endl;
+    }
+};
+
+class Cat : public Animal {
+public:
+    void speak() {
+        cout << "小猫在说话" <<endl;
+    }
+};
+
+// 执行说话的函数Dog
+// 地址早绑定，编译时就能确定函数地址
+void DoSpeak(Animal &animal) { 
+    animal.speak();
+}
+
+void test01() {
+    Cat cat;
+    DoSpeak(cat); // Animal &animal = cat 基类引用指向子类对象
+}
+
+int main() {
+    test01();
+    return 1;
+}
+
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+动物在说话
+
+[Done] exited with code=1 in 1.667 seconds
+
+----------------------------------------------------------------------------------------------------------------------------------------
+#include<iostream>
+using namespace std;
+
+class Animal{
+public:
+    // 虚函数
+    virtual void speak() {
+        cout << "动物在说话" <<endl;
+    }
+};
+
+class Cat : public Animal {
+public:
+    void speak() {
+        cout << "小猫在说话" <<endl;
+    }
+};
+
+// 执行说话的函数
+// 地址早绑定，编译时就能确定函数地址
+void DoSpeak(Animal &animal) { 
+    animal.speak();
+}
+
+void test01() {
+    Cat cat;
+    DoSpeak(cat); // Animal &animal = cat 基类引用指向子类对象
+    
+}
+
+int main() {
+    test01();
+    return 1;
+}
+
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+小猫在说话
+
+[Done] exited with code=1 in 0.549 seconds
+
+----------------------------------------------------------------------------------------------------------------------------------------
+
+#include<iostream>
+using namespace std;
+
+class Animal{
+public:
+    // 虚函数
+    virtual void speak() {
+        cout << "动物在说话" <<endl;
+    }
+};
+
+class Cat : public Animal {
+public:
+    void speak() {
+        cout << "小猫在说话" <<endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    void speak() {
+        cout << "小狗在说话" <<endl;
+    }
+};
+
+// 执行说话的函数Dog
+// 地址早绑定，编译时就能确定函数地址
+void DoSpeak(Animal &animal) { 
+    animal.speak();
+}
+
+void test01() {
+    Cat cat;
+    DoSpeak(cat); // Animal &animal = cat 基类引用指向子类对象
+    
+    Dog dog;
+    DoSpeak(dog); // Animal &animal = dog
+}
+
+int main() {
+    test01();
+    return 1;
+}
+
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+小猫在说话
+小狗在说话
+
+[Done] exited with code=1 in 0.54 seconds
+----------------------------------------------------------------------------------------------------------------------------------------
+
+/*
+* 真实开发中，提倡的是开闭原则，对扩展开放，对修改进行关闭
+* 多态带来的好处：1. 组织结构清晰，出错容易定位；2. 可读性强；3. 前期可扩展性和后期的可维护性高 
+*/
+#include<iostream>
+#include<string>
+using namespace std;
+
+class Calculator {
+public:
+    int getResult(string oper) {
+        if (oper == "+") {
+            return m_Num1 + m_Num2;
+        }
+        else if (oper == "-") {
+            return m_Num1 - m_Num2;
+        }
+        else if (oper == "*") {
+            return m_Num1 * m_Num2;
+        }
+    }
+    int m_Num1;
+    int m_Num2;
+};
+
+// 实现计算抽象类
+class AbstractCalculator {
+public:
+    virtual int getResult() {
+        return 0;
+    }
+
+    int m_Num1;
+    int m_Num2;
+};
+
+class AddCalculator : public AbstractCalculator {
+public:
+    int getResult() {
+        return m_Num1 + m_Num2;
+    }
+};
+
+class SubCalculator : public AbstractCalculator {
+public:
+    int getResult() {
+        return m_Num1 + m_Num2;
+    }
+};
+
+class MulCalculator : public AbstractCalculator {
+public:
+    int getResult() {
+        return m_Num1 * m_Num2;
+    }
+};
+
+void test01() {
+    Calculator c;
+    c.m_Num1 = 10;
+    c.m_Num2 = 10;
+
+    cout << c.m_Num1 << "+" << c.m_Num2 << "=" << c.getResult("+") << endl;
+    cout << c.m_Num1 << "-" << c.m_Num2 << "=" << c.getResult("-") << endl;
+    cout << c.m_Num1 << "*" << c.m_Num2 << "=" << c.getResult("*") << endl;
+}
+
+void test02() {
+    AbstractCalculator *pObj = new AddCalculator;
+    pObj->m_Num1 = 100;
+    pObj->m_Num2 = 100;
+    cout << pObj->m_Num1 << "+" << pObj->m_Num2 << "=" << pObj->getResult() << endl;
+    delete pObj;
+    pObj = NULL;
+
+    pObj = new SubCalculator;
+    pObj->m_Num1 = 100;
+    pObj->m_Num2 = 100;
+    cout << pObj->m_Num1 << "-" << pObj->m_Num2 << "=" << pObj->getResult() << endl;
+    delete pObj;
+    pObj = NULL;
+
+}
+
+int main() {
+    test01(); // 不使用多态的方式
+    test02(); // 使用多态的方式
+    return 1;
+}
+
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+10+10=20
+10-10=0
+10*10=100
+100+100=200
+100-100=200
+
+[Done] exited with code=1 in 0.571 seconds
+----------------------------------------------------------------------------------------------------------------------------------------
+#include<iostream>
+using namespace std;
+
+// 抽象类
+class Base {
+public:
+    // 纯虚函数
+    // 只要有一个纯虚函数，这个类就是抽象类
+    // 抽象类的特点：
+    // 1.无法实例化对象
+    // 2.抽象类的子类，必须要重写父类中的虚函数，否则也属于抽象类
+    virtual void func() = 0;
+};
+
+
+class Son : public Base {
+public:
+    void func() {
+        cout << "func 函数调用" <<endl;
+    }
+};
+
+// 编译报错
+void test01() {
+//    Base b;   // 函数栈区：抽象类无法实例化对象
+//    new Base; // 堆区：抽象类无法实例化对象
+}
+
+// 编译报错
+void test02() {
+    Son s;   // 函数栈区：子类重写父类中的纯虚函数，否则抽象类无法实例化对象
+    Base *pObj = new Son;
+    pObj->func();
+}
+
+int main() {
+    test02();
+    return 1;
+}
+
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+tempCodeRunnerFile.cc: In function 'void test01()':
+tempCodeRunnerFile.cc:12:10: error: cannot declare variable 'b' to be of abstract type 'Base'
+     Base b;
+          ^
+tempCodeRunnerFile.cc:5:7: note:   because the following virtual functions are pure within 'Base':
+ class Base {
+       ^~~~
+tempCodeRunnerFile.cc:8:18: note: 	'virtual void Base::func()'
+     virtual void func() = 0;
+                  ^~~~
+
+[Done] exited with code=1 in 0.292 seconds
+
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+tempCodeRunnerFile.cc: In function 'void test01()':
+tempCodeRunnerFile.cc:25:10: error: cannot declare variable 'b' to be of abstract type 'Base'
+     Base b;   // 函数栈区：抽象类无法实例化对象
+          ^
+tempCodeRunnerFile.cc:5:7: note:   because the following virtual functions are pure within 'Base':
+ class Base {
+       ^~~~
+tempCodeRunnerFile.cc:12:18: note: 	'virtual void Base::func()'
+     virtual void func() = 0;
+                  ^~~~
+tempCodeRunnerFile.cc:26:9: error: invalid new-expression of abstract class type 'Base'
+     new Base; // 堆区：抽象类无法实例化对象
+         ^~~~
+
+[Done] exited with code=1 in 0.286 seconds
+
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+func 函数调用
+
+[Done] exited with code=1 in 0.554 seconds
+---------------------------------------------------------------------------------------------------------------------------------------
+#include<iostream>
+using namespace std;
+
+class AbstractDrinking {
+public:
+    virtual void Boil() = 0;
+    virtual void Brew() = 0;
+    virtual void PourInCup() = 0;
+    virtual void PutSomeThing() = 0;
+
+    void makeDrink() {
+        Boil();
+        Brew();
+        PourInCup();
+        PutSomeThing();
+    }
+};
+
+class Coffee : public AbstractDrinking {
+public:
+    virtual void Boil() {
+        cout << "煮水" <<endl;
+    }
+    virtual void Brew() {
+        cout << "冲泡咖啡" <<endl;
+    }
+    virtual void PourInCup() {
+        cout << "倒入杯中" <<endl;
+    }
+    virtual void PutSomeThing() {
+        cout << "加入糖和牛奶" <<endl;
+    }
+};
+
+class Tea : public AbstractDrinking {
+public:
+    virtual void Boil() {
+        cout << "煮矿泉水" <<endl;
+    }
+    virtual void Brew() {
+        cout << "冲泡茶叶" <<endl;
+    }
+    virtual void PourInCup() {
+        cout << "倒入杯中" <<endl;
+    }
+    virtual void PutSomeThing() {
+        cout << "加入枸杞" <<endl;
+    }
+};
+
+void DoWork(AbstractDrinking *pObj) {
+    pObj->makeDrink();
+    delete pObj;
+    pObj = NULL;
+}
+
+void test01() {
+    DoWork(new Coffee); // AbstractDrinking *pObj = Coffee
+    cout << "-------------"<<endl;
+    DoWork(new Tea);    // AbstractDrinking *pObj = Tea
+}
+
+int main() {
+    test01();
+    return 1;
+}
+[Running] cd "d:\VsCode\redis\thread\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\VsCode\redis\thread\"tempCodeRunnerFile
+煮水
+冲泡咖啡
+倒入杯中
+加入糖和牛奶
+-------------
+煮矿泉水
+冲泡茶叶
+倒入杯中
+加入枸杞
+
+[Done] exited with code=1 in 2.244 seconds

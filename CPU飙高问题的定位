@@ -1,0 +1,14 @@
+方法一：使用gdb多次打印线程的堆栈
+1.top--查看占用率最高的pid
+2.top -Hp [pid]--获取CPU占用率最高的tid（线程id）
+3.使用gdb多次打印线程的堆栈
+gdb attach [pid]
+set height 0
+set print pretty on
+thread apply [tid] bt
+detach
+quit
+
+方法二：
+1.top--查看占用率最高的pid
+2.perf top -p [pid]--打印出CPU使用率最高的函数

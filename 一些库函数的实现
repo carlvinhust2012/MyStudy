@@ -1,0 +1,46 @@
+/*
+* 为什么返回参数还要是char * 类型的?
+*/
+char *strcat(char *pDst, const char *pSrc) {
+   if (NULL == pDst || NULL == pSrc) {
+          return NULL;
+   }
+   
+   char *cp = pDst;
+   while (*cp) cp++; // find the end of the pDst
+   while (*cp++ = *pSrc++);
+   
+   return pDst;
+}
+
+举例：
+#include <iostream>
+
+namespace worker {
+class StrCat {
+public:
+    char *Strcat(char *pDst, const char *pSrc) {
+        if (NULL == pDst || NULL == pSrc) {
+            return NULL;
+        }
+        char *cp = pDst;
+        while (*cp) cp++;
+        while (*cp++ = *pSrc++);
+        return pDst;
+    }
+  }; 
+};
+
+   int main() {
+    char ch1[10] = "1234";
+    char ch2[] = "5678";
+    worker::StrCat StrCat1;
+    char *ch = StrCat1.Strcat(ch1, ch2);
+    std::cout<< ch1 <<std::endl;
+    return 1;
+}
+
+[Running] cd "d:\CodeTrainning\leetcode\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\CodeTrainning\leetcode\"tempCodeRunnerFile
+12345678
+
+[Done] exited with code=1 in 0.983 seconds

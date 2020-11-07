@@ -1,0 +1,64 @@
+
+#include <iostream>
+#include <string>
+using namespace std;
+
+class A {
+public:
+    A() {};   //不会计算在内
+    int a;    //4字节
+    char ch;  //1字节，但是会做补齐
+    virtual void fuc() {}; //函数指针，4字节
+    virtual ~A() {};       //函数指针，4字节
+};
+
+int main() {
+
+    A B;
+    int len = sizeof(B);
+    cout << len << endl;
+    return 1;
+}
+
+执行后结果为：
+[Running] cd "d:\CodeTrainning\leetcode\" && g++ tempCodeRunnerFile.cpp -o tempCodeRunnerFile && "d:\CodeTrainning\leetcode\"tempCodeRunnerFile
+16
+
+[Done] exited with code=1 in 1.109 seconds
+
+关于空class的字节对齐--结果为1字节
+#include <iostream>
+
+class A {
+
+};
+
+
+int main() {
+    
+  std::cout << sizeof(A)<<std::endl;
+  return 1;
+}
+
+[Running] cd "d:\CodeTrainning\leetcode\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\CodeTrainning\leetcode\"tempCodeRunnerFile
+1
+
+[Done] exited with code=1 in 0.956 seconds
+
+
+//关于0长数组
+#include <iostream>
+
+// 64 bit machine
+typedef struct RedisModulePoolAllocBlock {
+    uint32_t size; // 4 Bytes
+    uint32_t used; // 4 Bytes
+    struct RedisModulePoolAllocBlock *next; // 8 Bytes
+    char memory[];                          // 0 Bytes
+} RedisModulePoolAllocBlock;
+
+int main() {
+    RedisModulePoolAllocBlock RMPAB;
+    std::cout << sizeof(RMPAB) <<std::endl;
+    return 1;
+}

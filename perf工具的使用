@@ -1,0 +1,167 @@
+1.如果使用的centOS或者Redhat系统，命令行敲 perf 会提示你是否安装：
+2.perf help --显示帮助信息
+3.perf help [command] --显示具体帮助信息
+4.perf top -p [pid] --查看指定进程最消耗CPU的函数
+5.perf stat ./helloworld.o --统计helloworld程序各阶段执行耗时，比如context-switches、cpu-migrations、page-faults、cycles、instructions、branches、branch-misses      
+6.perf record -g -p [pid] --记录pid各函数消耗与调用关系，结果记录于perf.data
+7.perf report --将perf.data 以图形显示
+8. perf record ./helloworld.o ----记录helloworld程序各阶段执行耗时
+[root@desktop-k6dpr1a hugo]# perf record ./helloworld.o
+hello world
+[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.014 MB perf.data (2 samples) ]
+[root@desktop-k6dpr1a hugo]# ll
+total 56
+-rwxr-xr-x.  1 root root   204 Aug 14 06:59 helloworld.cc
+-rwxr-xr-x.  1 root root 13584 Aug 14 06:59 helloworld.o
+-rw-r--r--.  1 root root  4518 Aug 14 07:06 log.txt
+-rw-------.  1 root root 20100 Aug 29 07:56 perf.data
+drwxr-xr-x. 19 root root  4096 Aug 14 19:41 RAMCloud-master
+drwxr-xr-x.  6 root root  4096 Aug 14 19:41 redis-5.0
+[root@desktop-k6dpr1a hugo]# perf report
+
+Samples: 2  of event 'cpu-clock:pppH', Event count (approx.): 500000
+Overhead  Command       Shared Object      Symbol
+  50.00%  helloworld.o  [kernel.kallsyms]  [k] _raw_spin_unlock_irqrestore                                                                                                                                                                                 ◆
+  50.00%  helloworld.o  [kernel.kallsyms]  [k] clear_page_orig  
+
+[root@desktop-k6dpr1a hugo]# perf
+bash: perf: command not found...
+Install package 'perf' to provide command 'perf'? [N/y] y
+
+
+ * Waiting in queue... 
+The following packages have to be installed:
+ libbpf-0.0.4-5.el8.x86_64	Libbpf library
+ perf-4.18.0-193.14.2.el8_2.x86_64	Performance monitoring for the Linux kernel
+Proceed with changes? [N/y] y
+
+
+ * Waiting in queue... 
+ * Waiting for authentication... 
+ * Waiting in queue... 
+ * Downloading packages... 
+ * Requesting data... 
+ * Testing changes... 
+ * Installing packages... 
+
+ usage: perf [--version] [--help] [OPTIONS] COMMAND [ARGS]
+
+ The most commonly used perf commands are:
+   annotate        Read perf.data (created by perf record) and display annotated code
+   archive         Create archive with object files with build-ids found in perf.data file
+   bench           General framework for benchmark suites
+   buildid-cache   Manage build-id cache.
+   buildid-list    List the buildids in a perf.data file
+   c2c             Shared Data C2C/HITM Analyzer.
+   config          Get and set variables in a configuration file.
+   data            Data file related processing
+   diff            Read perf.data files and display the differential profile
+   evlist          List the event names in a perf.data file
+   ftrace          simple wrapper for kernel's ftrace functionality
+   inject          Filter to augment the events stream with additional information
+   kallsyms        Searches running kernel for symbols
+   kmem            Tool to trace/measure kernel memory properties
+   kvm             Tool to trace/measure kvm guest os
+   list            List all symbolic event types
+   lock            Analyze lock events
+   mem             Profile memory accesses
+   record          Run a command and record its profile into perf.data
+   report          Read perf.data (created by perf record) and display the profile
+   sched           Tool to trace/measure scheduler properties (latencies)
+   script          Read perf.data (created by perf record) and display trace output
+   stat            Run a command and gather performance counter statistics
+   test            Runs sanity tests.
+   timechart       Tool to visualize total system behavior during a workload
+   top             System profiling tool.
+   version         display the version of perf binary
+   probe           Define new dynamic tracepoints
+   trace           strace inspired tool
+
+ See 'perf help COMMAND' for more information on a specific command.
+
+[root@desktop-k6dpr1a hugo]# perf stat ./helloworld.o
+hello world
+
+ Performance counter stats for './helloworld.o':
+
+              2.49 msec task-clock                #    0.189 CPUs utilized          
+                 1      context-switches          #    0.402 K/sec                  
+                 0      cpu-migrations            #    0.000 K/sec                  
+               110      page-faults               #    0.044 M/sec                  
+   <not supported>      cycles                                                      
+   <not supported>      instructions                                                
+   <not supported>      branches                                                    
+   <not supported>      branch-misses                                               
+
+       0.013197001 seconds time elapsed
+
+       0.000813000 seconds user
+       0.002440000 seconds sys
+
+
+[root@desktop-k6dpr1a hugo]# perf top
+[root@desktop-k6dpr1a hugo]# perf list
+
+List of pre-defined events (to be used in -e):
+
+  alignment-faults                                   [Software event]
+  bpf-output                                         [Software event]
+  context-switches OR cs                             [Software event]
+  cpu-clock                                          [Software event]
+  cpu-migrations OR migrations                       [Software event]
+  dummy                                              [Software event]
+  emulation-faults                                   [Software event]
+  major-faults                                       [Software event]
+  minor-faults                                       [Software event]
+  page-faults OR faults                              [Software event]
+  task-clock                                         [Software event]
+
+  duration_time                                      [Tool event]
+
+  L1-dcache-load-misses                              [Hardware cache event]
+  L1-dcache-loads                                    [Hardware cache event]
+  L1-dcache-stores                                   [Hardware cache event]
+  L1-icache-load-misses                              [Hardware cache event]
+  branch-load-misses                                 [Hardware cache event]
+  branch-loads                                       [Hardware cache event]
+  dTLB-load-misses                                   [Hardware cache event]
+  dTLB-loads                                         [Hardware cache event]
+  dTLB-store-misses                                  [Hardware cache event]
+  dTLB-stores                                        [Hardware cache event]
+  iTLB-load-misses                                   [Hardware cache event]
+  iTLB-loads                                         [Hardware cache event]
+
+  msr/pperf/                                         [Kernel PMU event]
+  msr/smi/                                           [Kernel PMU event]
+  msr/tsc/                                           [Kernel PMU event]
+  ref-cycles OR cpu/ref-cycles/                      [Kernel PMU event]
+  topdown-fetch-bubbles OR cpu/topdown-fetch-bubbles/ [Kernel PMU event]
+  topdown-recovery-bubbles OR cpu/topdown-recovery-bubbles/ [Kernel PMU event]
+  topdown-slots-issued OR cpu/topdown-slots-issued/  [Kernel PMU event]
+  topdown-slots-retired OR cpu/topdown-slots-retired/ [Kernel PMU event]
+  topdown-total-slots OR cpu/topdown-total-slots/    [Kernel PMU event]
+
+cache:
+  l1d.replacement                                   
+       [L1D data line replacements]
+  l1d_pend_miss.fb_full                             
+       [Number of times a request needed a FB entry but there was no entry available for it. That is the FB unavailability was dominant reason for blocking the request. A request includes cacheable/uncacheable demands that is load, store or SW
+        prefetch]
+  l1d_pend_miss.pending                             
+       [L1D miss outstandings duration in cycles]
+  l1d_pend_miss.pending_cycles                      
+       [Cycles with L1D load Misses outstanding]
+  l1d_pend_miss.pending_cycles_any                  
+       [Cycles with L1D load Misses outstanding from any thread on physical core]
+  l2_lines_in.all                                   
+       [L2 cache lines filling L2]
+  l2_lines_out.non_silent                           
+       [Counts the number of lines that are evicted by L2 cache when triggered by an L2 cache fill. Those lines are in Modified state. Modified lines are written back to L3]
+  l2_lines_out.silent                               
+       [Counts the number of lines that are silently dropped by L2 cache when triggered by an L2 cache fill. These lines are typically in Shared or Exclusive state. A non-threaded event]
+  l2_lines_out.useless_hwpf                         
+       [Counts the number of lines that have been hardware prefetched but not used and now evicted by L2 cache]
+  l2_lines_out.useless_pref                         
+
+
