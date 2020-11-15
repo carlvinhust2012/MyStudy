@@ -9,8 +9,28 @@ nawk 'pattern[action]' filename
 
 范例：
 cat employee.txt
-Tom  Jones  4424 5/12/66 543354
-Mary  Adams 5346 11/4/63 28765
+Tom Jones        4424  5/12/66 543354
+Mary Adams       5346  11/4/63 28765
+Sally Chang      1654  7/22/54 650000
+Billy Black      1683  9/23/44 336500
+
+打印出包含模式Mary的行
+# nawk '/Mary/' employee.txt 
+Mary Adams       5346  11/4/63 28765
+
+打印出文件employee的第一个字段（字段是从行的左端开始，以空白符分隔）
+#nawk '{print $1}' employee.txt
+Tom
+Mary
+Sally
+Billy
+
+当文件中的某一行含有模式Sally，打印出该行的头2个字段
+# nawk '/Sally/{print $1, $2}' employee.txt
+Tom Jones  
+Mary Adams 
 Sally Chang
+Billy Black
+
 
 
