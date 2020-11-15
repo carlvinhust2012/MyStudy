@@ -1,0 +1,16 @@
+1.awk（3个姓氏的字母，Alfred Aho、Brain Kenighan、PeterWeinberge）能用来做什么？
+--awk处理数据，生成报告，衍生nawk，gawk
+--处理数据可以来自标准输入、一个或者多个文件，或者某个进程的输出
+
+格式：
+nawk 'pattern' filename
+nawk '[action]' filename
+nawk 'pattern[action]' filename
+
+范例：
+cat employee.txt
+Tom  Jones  4424 5/12/66 543354
+Mary  Adams 5346 11/4/63 28765
+Sally Chang
+
+
