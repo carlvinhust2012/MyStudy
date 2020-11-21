@@ -1,0 +1,18 @@
+
+1.首先进入本地git仓库目录下，打开git bash环境；
+huche@DESKTOP-K6DPR1A MINGW64 /d/GitRepo (master)
+$
+
+2.使用git branch命令可以查看到，当前目录下只有一个master分支
+huche@DESKTOP-K6DPR1A MINGW64 /d/GitRepo (master)
+$ git branch
+  HugoStudy
+* master
+
+3.使用git branch 分支名称创建分支，创建完成后通过git branch可以看到本地已经多出了一个新建的分支
+
+4.本地创建后，我们需要将本地的分支推到远程服务器上这样别人也都能看到这个分支，未推送时远端目前只有一个master分支
+
+5.使用git push origin 分支名   命令将本地的修改推送到远程服务器上
+
+6.push完成后你可以在远程服务上看到了新建的分支
