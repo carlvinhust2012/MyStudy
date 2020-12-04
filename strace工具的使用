@@ -1,0 +1,83 @@
+1.strace简介
+strace常用来跟踪进程执行时的系统调用和所接收的信号。
+strace可以跟踪到一个进程产生的系统调用，包括参数、返回值、执行消耗的时间。
+在Linux世界，进程不能直接访问硬件设备，当进程需要访问硬件设备(比如读取磁盘文件，接收网络数据等等)时，必须由用户态模式切换至内核态模式，通过系统调用访问硬件设备。
+
+2.linux系统调用
+Linux内核目前有300多个系统调用，详细的列表可以通过syscalls手册页查看。这些系统调用主要分为几类：
+文件和设备访问类，比如open/close/read/write/chmod等
+进程管理类 fork/clone/execve/exit/getpid等
+信号类 signal/sigaction/kill 等
+内存管理 brk/mmap/mlock等
+进程间通信IPC shmget/semget * 信号量、共享内存、消息队列等
+网络通信 socket/connect/sendto/sendmsg 等
+其他
+
+3.strace的应用场景
+基于特定的系统调用或系统调用组进行过滤
+通过统计特定系统调用的使用次数、所花费的时间、以及成功和错误的数量来分析系统调用的使用。
+它跟踪发送到进程的信号。
+通过pid附加到任何正在运行的进程。
+调试性能问题，查看系统调用的频率，找出耗时的程序段
+查看程序读取的是哪些文件从而定位比如配置文件加载错误问题
+查看某个php脚本长时间运行“假死”情况
+当程序出现“Out of memory”时被系统发出的SIGKILL信息所kill
+另外因为strace拿到的是系统调用相关信息，一般也即是IO操作信息，这个对于排查比如cpu占用100%问题是无能为力的，这个时候就可以使用GDB工具了。
+
+4.使用实例
+从一个示例命令查看
+strace -tt -T -v -f -e trace=file -o /data/log/strace.log -s 1024 -p 23489
+
+-c 统计每一系统调用的所执行的时间,次数和出错的次数等. 
+-d 输出strace关于标准错误的调试信息. 
+-f 除了跟踪当前进程外，还跟踪由fork调用所产生的子进程. 
+-ff 如果提供-o filename,则所有进程的跟踪结果输出到相应的filename.pid中,pid是各进程的进程号. 
+-F 尝试跟踪vfork调用.在-f时,vfork不被跟踪. 
+-h 输出简要的帮助信息. 
+-i 输出系统调用的入口指针寄存器值. 
+-q 禁止输出关于结合(attaching)、脱离(detaching)的消息，当输出重定向到一个文件时，自动抑制此类消息. 
+-r 打印出相对时间关于每一个系统调用，即连续的系统调用起点之间的时间差，与-t对应. 
+-t 打印各个系统调用被调用时的绝对时间秒级，观察程序各部分的执行时间可以用此选项。 
+-tt 在输出中的每一行前加上时间信息,微秒级. 
+-ttt 在每行输出前添加相对时间信息，格式为”自纪元时间起经历的秒数.微秒数”
+-T 显示每一调用所耗的时间，其时间开销在输出行最右侧的尖括号内. 
+-v 冗余显示模式：显示系统调用中argv[]envp[]stat、termio(s)等数组/结构体参数所有的元素/成员内容. 
+-V 输出strace的版本信息. 
+-x 以十六进制形式输出非标准字符串 。
+-xx 所有字符串以十六进制形式输出. 
+-a column 设置返回值的输出位置.默认为40，即"="出现在第40列.
+-e expr 指定一个表达式,用来控制如何跟踪.
+    -e trace=set 只跟踪指定的系统 调用.例如:-e trace=open.
+    -e trace=file 只跟踪有关文件操作的系统调用. 
+    -e trace=process 只跟踪有关进程控制的系统调用. 
+    -e trace=network 跟踪与网络有关的所有系统调用. 
+    -e trace=signal 跟踪所有与系统信号有关的系统调用 
+    -e trace=ipc 跟踪所有与进程通讯有关的系统调用 
+    -e abbrev=set 设定 strace输出的系统调用的结果集.-v 等与 abbrev=none.默认为abbrev=all. 
+    -e raw=set 将指 定的系统调用的参数以十六进制显示. 
+    -e signal=set 指定跟踪的系统信号.默认为all.如signal=!SIGIO,表示不跟踪SIGIO信号. 
+    -e read=set 输出从指定文件中读出 的数据.例如: -e read=3,5 -e write=set 
+-E var 从命令的环境变量列表中移除var。
+-E var=val 将var=val放入命令的环境变量列表.
+-o filename 将strace的输出写入文件filename，而不是显示到标准错误输出（stderr）.
+-p pid 跟踪指定的进程pid，可指定多达32个(-p pid)选项以同时跟踪多个进程。该选项常用于调试后台进程. 
+-s strsize 限制每行输出中字符串(如read参数)的最大显示长度，默认32字节。但文件名总是完整显示
+-S sortby 按指定规则对-c选项的输出直方图进行排序。sortby取值可为time、calls、name和nothing(默认     time)
+-u username 以username 的UID和GID执行被跟踪的命令
+
+跟踪redis-server, 看其启动时都访问了哪些文件
+strace -tt -T -f -e trace=file -o /home/chenqionghe/log/strace.log -s 1024 redis-server
+输出日志文件：
+15711 10:18:06.423843 execve("/usr/bin/redis-server", ["redis-server"], 0x7ffe3e8af6c8 /* 25 vars */) = 0 <0.000203>
+15711 10:18:06.424317 access("/etc/ld.so.nohwcap", F_OK) = -1 ENOENT (No such file or directory) <0.000053>
+15711 10:18:06.424442 access("/etc/ld.so.preload", R_OK) = -1 ENOENT (No such file or directory) <0.000041>
+15711 10:18:06.424584 openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3 <0.000055>
+15711 10:18:06.424819 access("/etc/ld.so.nohwcap", F_OK) = -1 ENOENT (No such file or directory) <0.000020>
+15711 10:18:06.424904 openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libm.so.6", O_RDONLY|O_CLOEXEC) = 3 <0.000053>
+15711 10:18:06.425282 access("/etc/ld.so.nohwcap", F_OK) = -1 ENOENT (No such file or directory) <0.000051>
+15711 10:18:06.425425 openat(AT_FDCWD, "/usr/lib/x86_64-linux-gnu/libjemalloc.so.1", O_RDONLY|O_CLOEXEC) = 3 <0.000027>
+15711 10:18:06.425865 access("/etc/ld.so.nohwcap", F_OK) = -1 ENOENT (No such file or directory) <0.000026>
+
+5.参考链接
+https://www.cnblogs.com/chenqionghe/p/10789238.html
+
