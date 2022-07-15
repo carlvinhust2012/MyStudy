@@ -1,0 +1,139 @@
+<容器存储>
+
+CRTP技术因为其性能优越，实现简单，在工程应用中非常广泛。实际上，相对于普通的虚函数，其具有一定的局限性。
+问题在于Base类实际上是一个模板类，而不是一个实际的类。
+因此，如果存在名为Derived和Derived1的派生类，则基类模板初始化将具有不同的类型。
+这是因为，Base类将派生自不同的特化，即 Base，代码如下：
+
+#include <iostream>
+#include <string>
+
+template <typename T>
+class Base{
+ public:
+  void interface(){
+    static_cast<T*>(this)->imp();
+  }
+  void imp(){
+    std::cout << "in Base::imp" << std::endl;
+  }
+};
+
+class Derived : public Base<Derived> {
+ void imp(){
+    std::cout << "in Derived::imp" << std::endl;
+  }
+};
+
+class Derived1 : public Base<Derived1> {
+ void imp(){
+    std::cout << "in Derived1::imp" << std::endl;
+  }
+};
+
+int main() {
+  Base<Derived> *b = new Derived;
+  Base<Derived> *b1 = new Derived1;
+  auto vec = {d, d1}; // 出错
+
+  return 0;
+}
+
+在上述示例中，程序会输出如下：
+In function ‘int main()’:
+test.cc:39:20: error: unable to deduce ‘std::initializer_list<_Tp>’ from ‘{d, d1}’
+auto vec = {d, d1};
+
+从上面内容可以看出，vec类型推导失败，这是因为d和d1属于不同的类型，因此不能将CRTP对象或者指针放入容器中。
+
+---------------------------------------------------------------------------------------------------------------------
+<堆栈溢出>
+
+#include <iostream>
+#include <typeinfo>
+#include <sys/time.h>
+
+template<typename T>
+class Base {
+ public:
+  void PrintType() {
+    T &t = static_cast<T&>(*this);
+
+    t.PrintType();
+  }
+};
+
+class Derived : public Base<Derived> {
+  // 此处没有实现PrintType()函数
+};
+
+int main() {
+  Derived d;
+  d.PrintType();
+
+  return 0;
+}
+
+编译并运行之后，输出如下：
+Segmentation fault
+
+是不是感觉很奇怪，单分析代码，没看出什么问题来，于是借助gdb来进行分析，如下：
+#124 0x00000000004006c4 in Base<Derived>::PrintType (this=0x7fffffffe38f)
+    at crtp.cc:11
+#125 0x00000000004006c4 in Base<Derived>::PrintType (this=0x7fffffffe38f)
+    at crtp.cc:11
+#126 0x00000000004006c4 in Base<Derived>::PrintType (this=0x7fffffffe38f)
+    at crtp.cc:11
+#127 0x00000000004006c4 in Base<Derived>::PrintType (this=0x7fffffffe38f)
+    at crtp.cc:11
+#128 0x00000000004006c4 in Base<Derived>::PrintType (this=0x7fffffffe38f)
+    at crtp.cc:11
+#129 0x00000000004006c4 in Base<Derived>::PrintType (this=0x7fffffffe38f)
+    at crtp.cc:11
+#130 0x00000000004006c4 in Base<Derived>::PrintType (this=0x7fffffffe38f)
+    at crtp.cc:11
+#131 0x00000000004006c4 in Base<Derived>::PrintType (this=0x7fffffffe38f)
+    at crtp.cc:11
+
+从上述gdb的分析结果看出，重复执行crtp.cc中第11，即递归调用t.PrintType()。那么为什么会出现这种递归调用这种现象呢？
+
+在上一篇文章中，有提到，如果派生类没有实现某个基类中定义的函数，那么调用的是基类的函数。听起来比较绕口，我们以上述例子为例进行分析：
+
+• 在Base类中，定义了一个函数PrintType()，在该函数中通过state_cast转换后，调用PrintType()函数。
+• 派生类中没有实现PrintType()函数
+• 因为派生类中没有实现PrintType()函数，所以在基类进行调用的时候，仍然调用的是基类的PrintType()函数
+
+正是因为以上几点，所以才导致了这种递归调用引起的堆栈溢出。
+
+那么，如何避免此类问题呢？可以使用下述方式实现：
+
+template<typename T>
+class Base {
+ public:
+  void PrintType() {
+    T &t = static_cast<T&>(*this);
+
+    t.PrintTypeImpl();
+  }
+
+  void PrintTypeImpl() {}
+};
+
+class Derived : public Base<Derived> {
+  // 此处没有实现PrintTypeImpl()函数
+};
+
+int main() {
+  Derived d;
+
+  d.PrintType();
+
+  return 0;
+}
+
+在上述方案中，在基类中重新定义了另外一个函数PrintTypeImpl()，这样在调用PrintType()的时候，如果派生类中没有实现PrintTypeImpl()函数，
+则会调用基类的PrintTypeImpl()函数，这样就避免了因为递归调用而导致的堆栈溢出问题。
+-------------------------------------------------------------------------------------------------------------------------
+<手误比滑>
+
+
