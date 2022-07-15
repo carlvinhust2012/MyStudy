@@ -165,3 +165,265 @@ virtual是运行时多态，而CRTP则是在编译期就对模板进行了实例
 
 -------------------------------------------------------------------------------------------------------------------------------
 <代码复用>
+
+假如，现在要实现一个需求，根据对象的具体类型，输出其类型名称。
+
+class Base {
+ public:
+  void PrintType() {
+    std::cout << typeid(*this).name() << std::endl;
+  }
+};
+
+class Derived : public Base {};
+class Derived1 : public Base {};
+
+void PrintType(const Base& base) {
+  base.PrintType();
+}
+
+对于此种需求，首先想到的是使用virtual的多态功能实现，代码也很好写，如下：
+
+#include <iostream>
+#include <typeinfo>
+
+class Base {
+ public:
+  virtual void PrintType() const {
+    std::cout << typeid(*this).name() << std::endl;
+  }
+};
+
+class Derived : public Base {
+ public:
+  virtual void PrintType() const {
+    std::cout << typeid(*this).name() << std::endl;
+  }
+};
+
+class Derived1 : public Base {
+ public:
+  virtual void PrintType() const {
+    std::cout << typeid(*this).name() << std::endl;
+  }
+};
+
+void PrintType(const Base& base) {
+  base.PrintType();
+}
+
+int main() {
+  Derived d;
+  Derived1 d1;
+
+  PrintType(d);
+  PrintType(d1);
+
+  return 0;
+}
+
+输出如下：
+7Derived
+8Derived1
+
+ps: 需要注意的是，在上面的输出类型中，前面都有一个数字，这个数字是类名的长度。
+
+而如果使用CRTP，则实现如下：
+#include <iostream>
+#include <typeinfo>
+
+template<typename T>
+class Base {
+ public:
+  void PrintType() {
+    T &t = static_cast<T&>(*this);
+    std::cout << typeid(t).name() << std::endl;
+  }
+};
+
+class Derived : public Base<Derived> {};
+class Derived1 : public Base<Derived1> {};
+
+template<typename T>
+void PrintType(T base) {
+  base.PrintType();
+}
+
+int main() {
+  Derived d;
+  Derived1 d1;
+
+  PrintType(d);
+  PrintType(d1);
+
+  return 0;
+}
+
+函数输出如下：
+7Derived
+8Derived1
+
+通过上述输出可以看出，即使在Derived和Derived1类中没有定义PrintType()函数，
+也实现了与virtual函数一样的效果，所以使用CRTP的另外一个好处是避免冗余代码。
+
+---------------------------------------------------------------------------------------------------------------------------
+<性能对比>
+既然crtp也能实现多态，那么就有必要跟传统的运行时多态实现方式virtual来做下对比。
+
+virtual.cc:
+
+#include <iostream>
+#include <typeinfo>
+#include <sys/time.h>
+
+class Base {
+ public:
+  virtual void PrintType() const {
+  }
+};
+
+class Derived : public Base {
+ public:
+  virtual void PrintType() const {
+  }
+};
+class Derived1 : public Base {
+ public:
+  virtual void PrintType() const {
+  }
+};
+
+void PrintType(const Base& base) {
+  base.PrintType();
+}
+
+int main() {
+  Derived d;
+  Derived1 d1;
+
+  struct timeval start;
+  struct timeval end;
+  gettimeofday(&start_, NULL);
+  for (int i = 0; i < 1000000; ++i) {
+    PrintType(d);
+    PrintType(d1);
+  }
+  gettimeofday(&end, nullptr);
+  double cost = 1000000 * (end.tv_sec - start.tv_sec) +
+                  end.tv_usec - start.tv_usec;
+
+  std::cout << "virtual time cost " << cost << std::endl;
+  return 0;
+}
+
+
+crtp.cc:
+
+#include <iostream>
+#include <typeinfo>
+#include <sys/time.h>
+
+template<typename T>
+class Base {
+ public:
+  void PrintType() const {
+    T &t = static_cast<T&>(*this);
+    t.PrintType();
+  }
+};
+
+class Derived : public Base<Derived> {
+ public:
+  void PrintType() const {}
+};
+class Derived1 : public Base<Derived1> {
+ public:
+  void PrintType() const {}
+};
+
+template<typename T>
+void PrintType(T base) {
+  base.PrintType();
+}
+
+int main() {
+  Derived d;
+  Derived1 d1;
+
+  struct timeval start;
+  struct timeval end;
+  gettimeofday(&start, nullptr);
+  for (int i = 0; i < 1000000; ++i) {
+    PrintType(d);
+    PrintType(d1);
+  }
+  gettimeofday(&end, NULL);
+  double cost = 1000000 * (end.tv_sec - start.tv_sec) +
+                  end.tv_usec - start.tv_usec;
+
+  std::cout << "crtp time cost " << cost << std::endl;
+  return 0;
+}
+
+对上述两段代码分别编译运行之后，输出如下：
+virtual time cost 22757
+crtp time cost 7871
+
+从上述输出可以看出，crtp的耗时是virtual实现方式的1/3。
+
+--------------------------------------------------------------------------------------------------------------------------------------
+<局限性>
+既然CRTP能实现多态性，且其性能优于virtual，那么virtual还有没有存在的必要么？
+
+虽然CRTP最终还是调用派生类中的成员函数。
+但是，问题在于Base类实际上是一个模板类，而不是一个实际的类。
+因此，如果存在名为Derived和Derived1的派生类，则基类模板初始化将具有不同的类型。
+
+这是因为，Base类将进行不同类型的特化，代码如下：
+
+class Derived : public Base<Derived> {
+ void imp(){
+    std::cout << "in Derived::imp" << std::endl;
+  }
+};
+
+class Derived1 : public Base<Derived1> {
+ void imp(){
+    std::cout << "in Derived1::imp" << std::endl;
+  }
+};
+
+如果创建Base类模板的指针，则意味着存在两种类型的Base指针，即:
+// CRTP
+Base<Derived> *b = new Derived;
+Base<Derived> *b1 = new Derived1;
+
+显然，这与我们虚函数的方式不同。因为，动态多态性只给出了一种Base指针。
+但是现在，每个派生类都可以使用不同的指针类型。
+// virtual
+Base *v1 = new Derived;
+Base *v2 = new Derived1;
+
+正是因为基于CRTP方式的指针具有不同的类型，所以不能将CRTP基类指针存储在容器中，下面的代码将编译失败：
+
+int main() {
+  Base<Derived> *d = new Derived;
+  Base<Derived> *d1 = new Derived1;
+
+  auto vec = {d, d1};
+
+  return 0;
+}
+
+编译器输出如下：
+test.cc: In function ‘int main()’:
+test.cc:33: error: cannot convert ‘Derived1*’ to ‘Base<Derived>*’ in initialization
+test.cc:35: error: ISO C++ forbids declaration of ‘vec’ with no type
+test.cc:35: error: scalar object ‘vec’ requires one element in initializer
+
+正是因为其局限性，所以CRTP是一种特殊类型的多态性，在少数情况下可以替代动态多态性的需要。
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+<总结>
+通过CRTP技术，在某种程度上也可以实现多态功能，但其也仅限定于使用场景，正如局限性一节中所提到的，CRTP是一种特殊类型的多态性，在少数情况下可以替代动态多态性的需要；
+另外，使用CRTP技术，代码可读性降低、模板实例化之后的代码膨胀以及无法动态绑定(在编译期决实例化)，因此，我们可以根据使用场景，来灵活选择CRTP或者virtual来达到多态目的。
