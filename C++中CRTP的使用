@@ -1,1 +1,64 @@
+CRTP是Curiously Recurring Template Pattern的缩写，中文译为奇异的递归模板模式，是由James O. Coplien在其1995年的论文中首次提出。
 
+wikipedia给出了CRTP的一般形式，如下：
+
+// The Curiously Recurring Template Pattern (CRTP)
+template <typename T> 
+class Base {
+    // methods within Base can use template to access members of Derived
+};
+
+class Derived : public Base<Derived> {
+    // ...
+};
+
+看到这种定义方式，你一定感到很奇怪，其实，这种实现方式称为继承自模板。
+有一定编程经验的人，如果对于智能指针比较熟悉，那么已经无意中接触过这种技术，如下例子：
+
+class Test: public std::enable_shared_from_this<Test> {
+  // ...
+};
+
+如果与wikipedia给出的CRTP做对比，在这个示例中，Test对应于CRTP形式中的Derive的，而std::enable_shared_from_this()则对应于Base类。
+
+那么，这样做的好处或者目的是什么呢？
+
+其实，这样做的目的其实很明确，从基类对象的角度来看，派生类对象其实就是本身，这样的话只需要使用类型转换就可以把基类转化成派生类，从而实现基类对象对派生对象的访问。
+
+为了便于更加清晰的理解，完整举例如下：
+
+template <typename T>
+class Base {
+public:
+    void interface() {
+        static_cast<T*>(this)->imp();
+    };
+};
+
+class Derived : public Base<Derived> {
+public:
+    void imp() {
+        std::cout<< "in Derived::imp" << std::endl;  
+    }
+};
+
+int main() {
+  Base<Derived> b;
+  b.interface();
+  
+  return 0;
+}
+
+在上述例子中，我们发现在Base类的interface接口中，使用static_cast进行类型转换，从而调用派生类的成员函数。
+可能会有人感到好奇，为什么不用dynamic_cast进行类型转换呢？
+主要是因为dynamic_cast应用于运行时，而模板是在编译器就进行了实例化。
+
+编译运行，输出结果如下：
+in Derived::imp
+
+从上面的输出结果可以看出，即使我们没有声明virtual函数，也实现了多态的功能。
+
+截止到此，我们对CRTP有了一个初步的认识，总结起来，其有以下两个特点：
+
+• 继承自模板类
+• 派生类将自身作为参数传给模板类
