@@ -62,3 +62,106 @@ in Derived::imp
 
 • 继承自模板类
 • 派生类将自身作为参数传给模板类
+
+-----------------------------------------------------------------------------------------------------------------------------------------
+颠倒继承
+
+仍然使用上一节中的例子，如下：
+
+template <typename T>
+class Base {
+public:
+    void interface() {
+        static_cast<T*>(this)->imp();
+    };
+};
+
+class Derived : public Base<Derived> {
+public:
+    void imp() {
+        std::cout << "in Derived::imp" << std::endl;  
+    }
+};
+
+int main() {
+  Derived d;
+  d.interface();
+  
+  return 0;
+}
+
+在这个例子中，派生类Derived中定义了一个成员函数imp()，而该函数在基类Base中是没有声明的，
+所以，我们可以理解为对于CRTP，在基类中调用派生类的成员函数，扩展了基类的功能。
+而对于普通继承，则是派生类中调用基类的成员函数，扩展了派生类的功能，这就是我们所说的颠倒继承。
+
+---------------------------------------------------------------------------------------------------------------------------
+<使用场景>
+那么CRTP都用在什么场景呢？
+
+静态多态
+
+其实，在前面的例子中，已经大致了解了使用crtp技术来实现多态功能，该种实现方式为静态多态，是在编译期实现的。
+下面通过一个具体的例子来理解静态多态。
+
+#include <iostream>
+
+template <typename T>
+class Base{
+public:
+  void interface(){
+    static_cast<T*>(this)->imp();
+  }
+  
+  void imp(){
+    std::cout << "in Base::imp" << std::endl;
+  }
+};
+
+class Derived1 : public Base<Derived1> {
+public:
+  void imp(){
+    std::cout << "in Derived1::imp" << std::endl;
+  }
+};
+
+class Derived2 : public Base<Derived2> {
+ public:
+  void imp(){
+    std::cout << "in Derived2::imp" << std::endl;
+  }
+};
+
+class Derived3 : public Base<Derived3>{};
+
+template <typename T>
+void fun(T& base){
+    base.interface();
+}
+
+
+int main(){
+  Derived1 d1;
+  Derived2 d2;
+  Derived3 d3;
+
+  fun(d1);
+  fun(d2);
+  fun(d3);
+
+  return 0;
+}
+
+在上述代码中，定义了一个函数fun()，在其函数体内调用interface()函数。
+如果类型为Derived1和Derived2，则会调用这俩类型对应的imp()函数。
+而对于Derived3，因为其类内没有实现imp()函数，所以调用的是Base类即基类的imp函数。
+
+编译运行之后，输出如下：
+in Derived1::imp
+in Derived2::imp
+in Base::imp
+
+从上述输出可以看出，即使不使用virtual，也实现了多态功能，其二者的区别是：
+virtual是运行时多态，而CRTP则是在编译期就对模板进行了实例化，所以属于静态多态。
+
+-----------------------------------------------------------------------------------------------------------------------
+<代码复用>
