@@ -136,4 +136,41 @@ int main() {
 -------------------------------------------------------------------------------------------------------------------------
 <手误比滑>
 
+class Derived1 : public Base<Derived> { // 此处有笔误
+};
+
+CRTP可以带来性能上的好处，前提是我们遵守了正确的代码规范。如果真遇到笔误，那怎么办？——一般会有不可预期的行为
+
+为了尽量将上述笔误尽可能早的暴露出来，我们可以使用下面这张方式：
+根据继承规则，派生类初始化时一定会先调用基底类的构造函数，所以我们就将基类的构造函数声明为private，
+并且，利用 friend 修饰符的特点，即只有继承的子类 T 可以访问这个私有构造函数。
+其它的类如果想要访问这个私有构造函数，就会在编译期报错，如此做法，可以将问题暴露在编译阶段。
+
+即将基类Base重新定义为如下格式：
+template<typename T>
+class Base {
+ public:
+  virtual void PrintType() const {
+    std::cout << typeid(*this).name() << std::endl;
+  }
+  private:
+    Base() = default; // 私有构造函数，只有友元T可以访问
+    friend T;
+};
+
+经过上述修改，Base中只能Derived类访问Base类的构造函数，而Derived1是不能访问Base类构造函数的，因此在编译阶段失败。
+
+如上代码，编译的时候，会提示如下报错：
+test.cc: In function ‘int main()’:
+test.cc:39:12: error: use of deleted function ‘Derived1::Derived1()’
+   Derived1 d1;
+            ^
+test.cc:24:7: note: ‘Derived1::Derived1()’ is implicitly deleted because the default definition would be ill-formed:
+ class Derived1 : public Base<Derived> {
+       ^
+test.cc:12:5: error: ‘Base<T>::Base() [with T = Derived]’ is private
+     Base() = default;
+     ^
+test.cc:24:7: error: within this context
+ class Derived1 : public Base<Derived> {
 
