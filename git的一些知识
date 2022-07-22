@@ -1,0 +1,80 @@
+
+1.首先进入本地git仓库目录下，打开git bash环境；
+huche@DESKTOP-K6DPR1A MINGW64 /d/GitRepo (master)
+$
+
+2.使用git branch命令可以查看到，当前目录下只有一个master分支
+huche@DESKTOP-K6DPR1A MINGW64 /d/GitRepo (master)
+$ git branch
+  HugoStudy
+* master
+
+3.使用git branch 分支名称创建分支，创建完成后通过git branch可以看到本地已经多出了一个新建的分支
+
+4.本地创建后，我们需要将本地的分支推到远程服务器上这样别人也都能看到这个分支，未推送时远端目前只有一个master分支
+
+5.使用git push origin 分支名   命令将本地的修改推送到远程服务器上
+
+6.push完成后你可以在远程服务上看到了新建的分支
+
+
+#github上的提交如何撤销？
+撤销github上的提交
+1. 查询commit id
+      git log 
+1. rebase到要回退的commit id，进入交互界面，将pick 改为drop
+      git rebase -i <commit id>   或者 git reset --hard <commit id>
+1. 推送到远端
+      git push origin HEAD --force  或者 git push origin branch_name -f
+
+#git stash pop冲突
+https://blog.csdn.net/jy692405180/article/details/78520251
+
+#如何通过 Git 拉取 github 上的 Pull Request(PR) 到本地进行 review？
+如果自己使用的就是PR提交的仓库，命令为：
+git fetch origin pull/PRId/head:LocalBranchName
+其中，PRId 为该 Pull Request 的序号，LocalBranchName为拉取到本地后的分支名称。
+例：git fetch origin pull/1204/head:pr1204
+类似，如果自己的仓库是Clone的PR提交的仓库，则命令为：
+git fetch upstream pull/PRId/head:LocalBranchName
+
+#如何下载代码并创建对应分支？
+1. git clone下载master分支代码
+2. git branch -a 查看分支remotes/origin/incubator-doris
+3. 创建本地分支git checkout -b incubator-doris origin/incubator-doris
+4. 更新本地分支代码 git pull origin incubator-doris
+
+#如何提交代码到指定分支？
+git add test/chunk_manager_test.cpp
+git commit -m "ChunkManager-add ut for read/write"
+git push origin HEAD:refs/for/incubator-doris
+
+git commit --amend可以修改提交的注释
+
+#如何将之前所有修改都废弃掉？
+git fetch origin
+git reset --hard origin/incubator-doris
+或者
+git log 获取想回退到的commit id
+git reset --hard <commit id> 
+
+#如何处理代码合并冲突？（通常使用第二种）
+方法1：合并代码冲突？
+Step1. 在本地仓库中, 更新并合并代码
+git fetch origin
+git rebase origin/master
+Step2. 依据提示分别打开冲突的文件, 逐一修改冲突代码
+Step3. 所有冲突都修改完毕后, 提交修改的代码
+git add -u
+git rebase --continue
+Step4. 更新patch
+git push origin HEAD:refs/for/master
+
+方法2：合并代码冲突？
+1.git pull --rebase  衍合服务器最新代码
+2.git status 查看哪些文件冲突，解决冲突
+3.git add xxx 提交修改的代码
+4.git rebase --continue
+5.git log 如果rebase成功，表示冲突解决，可以查看log
+5.git commit --amend 修改最后一次提交
+6.git push origin HEAD:refs/for/master
