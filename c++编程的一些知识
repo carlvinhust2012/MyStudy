@@ -86,3 +86,47 @@ the i is:5
 
 [Done] exited with code=1 in 0.538 seconds
 
+C++函数后面加箭头 ----作用：推到出函数的返回类型
+C++定义一个函数
+第一种方式：
+return-type fun(...){...}
+如：int fun(...){...}
+
+第二种方式；
+auto fun(...)->return-type{...}
+如：auto fun()->int{...}
+
+第三种方式（模板）：
+使用decltype进行返回类型推导，无法返回模板参数
+//这种方式无法做到
+template<typename T1,typename T2>
+decltype(a+b) fun(T1 a,T2 b){...}
+
+//需要使用declval()进行辅助推导
+template<typename T1,typename T2>
+decltype(std::declval<T1>()+std::declval<T2>()) fun(T1 a,T2 b){...}
+
+//但是上面太麻烦了，所以就加了个箭头
+template<typename  T1,typename T2>
+auto fun(T1 a, T2 b)->decltype(a+b){...}
+
+C++11新增了语法，函数返回类型声明后置，在函数名和参数列表后面返回指定类型。
+C++函数返回类型后置一般用于模板函数中，可以提前返回编译器还没编译开始的类型。
+
+#include <iostream>
+
+//编译器在遇到f3的参数列表前，T和U还不在作用域内，因此在参数列表后使用decltype
+template<typename T, typename U>
+auto f3(T t, U u)->decltype(T*U)	//decltype强制类型转换，转换为(T*U)类型
+{
+	return t*u;
+}
+ 
+int main()
+{
+	double f1(int);			//函数返回类型前置，常用法
+	auto f2(int)->double;	//函数返回类型后置，C++11新增用法
+		
+	system("pause");
+	return 0;
+}
