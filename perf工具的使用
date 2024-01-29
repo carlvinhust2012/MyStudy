@@ -5,7 +5,13 @@
 5.perf stat ./helloworld.o --统计helloworld程序各阶段执行耗时，比如context-switches、cpu-migrations、page-faults、cycles、instructions、branches、branch-misses      
 6.perf record -g -p [pid] --记录pid各函数消耗与调用关系，结果记录于perf.data
 7.perf report --将perf.data 以图形显示
-8. perf record ./helloworld.o ----记录helloworld程序各阶段执行耗时
+8.perf record ./helloworld.o ----记录helloworld程序各阶段执行耗时
+9.perf c2c的使用
+# 采集，-t 后面接线程id
+perf c2c record -F 60000 -t 14321 sleep 5
+# 输出
+perf c2c report -NN -g --call-graph -c pid,iaddr --stdio
+
 [root@desktop-k6dpr1a hugo]# perf record ./helloworld.o
 hello world
 [ perf record: Woken up 1 times to write data ]
