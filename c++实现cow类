@@ -1,0 +1,30 @@
+如何用c++写一个cow类？
+一个简单的C++类，它使用Cow (Copy-On-Write) 模式来实现线程安全的数据结构：
+#include <iostream>
+#include <memory>
+#include <mutex>
+
+class CowString {
+public:
+    CowString(const std::string& str = "") : data(std::make_shared<std::string>(str)) {}
+
+    void append(const std::string& str) {
+        std::lock_guard<std::mutex> lock(m);
+        data = std::make_shared<std::string>(*data + str);
+    }
+
+    std::string get() const {
+        std::lock_guard<std::mutex> lock(m);
+        returnata;
+    }
+private:
+    std::shared_ptr<std::string> data;
+    mutable std::mutex m;
+};
+
+在这个例子中，我们使用 std::shared_ptr 来存储字符串，这样多个 CowString 对象可以共享同一个字符串。
+当一个线程想要修改字符串时，它首先获取互斥锁，然后创建一个新的字符串副本，并将 data 指针指向新的副本。
+这样，其他线程仍然可以看到原始字符串，而不会受到修改的影响。
+最后，修改完成后，我们释放互斥锁。
+请注意，这个实现是非常简单的，并且可能不适用于所有情况。
+在生产环境中使用时，应考虑使用更成熟和更安全的库或框架。
