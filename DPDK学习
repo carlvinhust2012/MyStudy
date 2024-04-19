@@ -1,3 +1,7 @@
-dpdk中操作配置文件的接口
+dpdk中配置文件的接口
 https://github.com/DPDK/dpdk/blob/e2e546ab5bf5e024986ccb5310ab43982f3bb40c/lib/cfgfile/rte_cfgfile.h
 https://github.com/DPDK/dpdk/blob/e2e546ab5bf5e024986ccb5310ab43982f3bb40c/lib/cfgfile/rte_cfgfile.c#L445
+
+dpdk中使用的mempool
+https://github.com/DPDK/dpdk/blob/e2e546ab5bf5e024986ccb5310ab43982f3bb40c/lib/mempool/rte_mempool.h
+https://github.com/DPDK/dpdk/blob/e2e546ab5bf5e024986ccb5310ab43982f3bb40c/lib/mempool/rte_mempool.c
