@@ -99,6 +99,14 @@ Status MemTable::Add(SequenceNumber s, ValueType type,
       bool res = (hint == nullptr)
               ? table->InsertKeyConcurrently(handle)
               : table->InsertKeyWithHintConcurrently(handle, hint);
+    
+      if (bloom_filter_ && prefix_extractor_ && prefix_extractor_->InDomain(key_without_ts)) {
+          // 并发添加？
+          bloom_filter_->AddConcurrently(prefix_extractor_->Transform(key_without_ts));
+      }
+      if (bloom_filter_ && moptions_.memtable_whole_key_filtering) {
+          bloom_filter_->AddConcurrently(key_without_ts);
+      }
   }
 }
 
