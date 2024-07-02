@@ -1,7 +1,7 @@
 头文件:rocksdb/db/memtable.h
 源文件:rocksdb/db/memtable.cc
 
-// MemTable比较大的实例
+// MemTable比较大的实例，涉及：比较器+内存分配器+迭代器
 class MemTable {
 public：
   struct KeyComparator : public MemTableRep::KeyComparator {
@@ -39,3 +39,65 @@ private：
 
 };
 
+// 写接口的实现
+Status MemTable::Add(SequenceNumber s, ValueType type,
+                     const Slice& key, /* user key */
+                     const Slice& value,
+                     const ProtectionInfoKVOS64* kv_prot_info,
+                     bool allow_concurrent,
+                     MemTablePostProcessInfo* post_process_info, void** hint) {
+  // 写入的数据项格式，5个部分：[key_size][key data][value_size][value data][checksum]
+  // Format of an entry is concatenation of:
+  //  key_size     : varint32 of internal_key.size()
+  //  key bytes    : char[internal_key.size()]
+  //  value_size   : varint32 of value.size()
+  //  value bytes  : char[value.size()]
+  //  checksum     : char[moptions_.protection_bytes_per_key]
+
+  // 根据value的类型，选择使用哪个类型的表
+  std::unique_ptr<MemTableRep>& table = (type == kTypeRangeDeletion ? range_del_table_ : table_);
+  // 使用表的分配器申请出一块buf
+  KeyHandle handle = table->Allocate(encoded_len, &buf);
+  // 对internal_key_size做编码
+  char* p = EncodeVarint32(buf, internal_key_size);
+  // 再将key的内容放到p指向的后续buf中
+  memcpy(p, key.data(), key_size);
+  // 将key保存为1个Slice
+  Slice key_slice(p, key_size);
+  // 指针后移1个key的长度，指向后续buf空间
+  p += key_size;
+  
+  // 
+  uint64_t packed = PackSequenceAndType(s, type);
+  EncodeFixed64(p, packed);
+  p += 8;
+  p = EncodeVarint32(p, val_size);
+  memcpy(p, value.data(), val_size);
+  // kv编码后的数据，都是保存在buf中的，至于带不带checksum由配置控制，将buf封装成1个Slice
+  Slice encoded(buf, encoded_len - moptions_.protection_bytes_per_key);
+
+  // 去掉key的时间戳？？？
+  Slice key_without_ts = StripTimestampFromUserKey(key, ts_sz_);
+  // 不允许并发
+  if (!allow_concurrent) {
+      if() {
+         Slice prefix = insert_with_hint_prefix_extractor_->Transform(key_slice);
+         bool res = table->InsertKeyWithHint(handle, &insert_hints_[prefix]);
+      } else {
+         bool res = table->InsertKey(handle);
+      }
+  } else {
+  
+  }
+}
+
+// 读接口的实现
+bool MemTable::Get(const LookupKey& key, std::string* value,
+                   PinnableWideColumns* columns, std::string* timestamp,
+                   Status* s, MergeContext* merge_context,
+                   SequenceNumber* max_covering_tombstone_seq,
+                   SequenceNumber* seq, const ReadOptions& read_opts,
+                   bool immutable_memtable, ReadCallback* callback,
+                   bool* is_blob_index, bool do_merge) {
+
+}
