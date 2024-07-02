@@ -89,6 +89,15 @@ Status MemTable::Add(SequenceNumber s, ValueType type,
   } else {
   
   }
+
+  // 往bloom过滤器中添加key？？？
+  if (bloom_filter_ && prefix_extractor_ &&
+      prefix_extractor_->InDomain(key_without_ts)) {
+      bloom_filter_->Add(prefix_extractor_->Transform(key_without_ts));
+  }
+  if (bloom_filter_ && moptions_.memtable_whole_key_filtering) {
+      bloom_filter_->Add(key_without_ts);
+  }
 }
 
 // 读接口的实现
