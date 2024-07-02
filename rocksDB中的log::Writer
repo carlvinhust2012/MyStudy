@@ -112,7 +112,7 @@ public:
   IOStatus Close(const WriteOptions& write_options);
 
 private:
-  std::unique_ptr<WritableFileWriter> dest_;
+  std::unique_ptr<WritableFileWriter> dest_; // 文件操作都要通过这个变量实现
   size_t block_offset_;  // Current offset in block
   uint64_t log_number_;
   bool recycle_log_files_;
