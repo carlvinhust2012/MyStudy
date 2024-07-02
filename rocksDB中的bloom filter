@@ -1,0 +1,52 @@
+相关文件：
+rocksdb/util/dynamic_bloom.h
+rocksdb/util/dynamic_bloom.cc
+
+// 存在于内存，支持并发访问
+class DynamicBloom {
+ public:
+    explicit DynamicBloom(Allocator* allocator, uint32_t total_bits,
+                        uint32_t num_probes = 6, size_t huge_page_tlb_size = 0,
+                        Logger* logger = nullptr);
+    ~DynamicBloom() {}
+
+  // Assuming single threaded access to this function.
+  void Add(const Slice& key);
+
+  // Like Add, but may be called concurrent with other functions.
+  void AddConcurrently(const Slice& key);
+
+  // Assuming single threaded access to this function.
+  void AddHash(uint32_t hash);
+
+  // Like AddHash, but may be called concurrent with other functions.
+  void AddHashConcurrently(uint32_t hash);
+
+  // Multithreaded access to this function is OK
+  bool MayContain(const Slice& key) const;
+
+  void MayContain(int num_keys, Slice* keys, bool* may_match) const;
+
+  // Multithreaded access to this function is OK
+  bool MayContainHash(uint32_t hash) const;
+
+  void Prefetch(uint32_t h);
+
+ private:
+  // Length of the structure, in 64-bit words. For this structure, "word"
+  // will always refer to 64-bit words.
+  uint32_t kLen;
+  
+  // We make the k probes in pairs, two for each 64-bit read/write. Thus,
+  // this stores k/2, the number of words to double-probe.
+  const uint32_t kNumDoubleProbes;
+
+  std::atomic<uint64_t>* data_;
+
+  // or_func(ptr, mask) should effect *ptr |= mask with the appropriate
+  // concurrency safety, working with bytes.
+  template <typename OrFunc>
+  void AddHash(uint32_t hash, const OrFunc& or_func);
+
+  bool DoubleProbe(uint32_t h32, size_t a) const;
+};
