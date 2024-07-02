@@ -1,0 +1,41 @@
+头文件:rocksdb/db/memtable.h
+源文件:rocksdb/db/memtable.cc
+
+// MemTable比较大的实例
+class MemTable {
+public：
+  struct KeyComparator : public MemTableRep::KeyComparator {
+  };
+  // 写入数据，memtable写入KV数据，实际是按照key排序的
+  Status Add(SequenceNumber seq, ValueType type, const Slice& key,
+             const Slice& value, const ProtectionInfoKVOS64* kv_prot_info,
+             bool allow_concurrent = false,
+             MemTablePostProcessInfo* post_process_info = nullptr,
+             void** hint = nullptr);
+  // 读取数据
+  bool Get(const LookupKey& key, std::string* value,
+           PinnableWideColumns* columns, std::string* timestamp, Status* s,
+           MergeContext* merge_context,
+           SequenceNumber* max_covering_tombstone_seq, SequenceNumber* seq,
+           const ReadOptions& read_opts, bool immutable_memtable,
+           ReadCallback* callback = nullptr, bool* is_blob_index = nullptr,
+           bool do_merge = true);
+private：
+  enum FlushStateEnum { FLUSH_NOT_REQUESTED, FLUSH_REQUESTED, FLUSH_SCHEDULED };
+
+  friend class MemTableIterator;
+  friend class MemTableBackwardIterator;
+  friend class MemTableList;
+
+  KeyComparator comparator_; // 比较器
+  const ImmutableMemTableOptions moptions_;
+  int refs_;
+  const size_t kArenaBlockSize;
+  AllocTracker mem_tracker_; // 内存追踪器
+  ConcurrentArena arena_; // 内存分配器
+  std::unique_ptr<MemTableRep> table_;
+  std::unique_ptr<MemTableRep> range_del_table_;
+  std::atomic_bool is_range_del_table_empty_;
+
+};
+
