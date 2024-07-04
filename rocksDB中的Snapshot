@@ -1,4 +1,11 @@
 相关文件：
+rocksdb/include/rocksdb/snapshot.h
+
+// 序列号实际是1个uint64_t
+// Represents a sequence number in a WAL file.
+using SequenceNumber = uint64_t;
+
+
 // 快照是保存DB特定状态的一种句柄，不可被修改，线程安全
 // Abstract handle to particular state of a DB.
 // A Snapshot is an immutable object and can therefore be safely
@@ -18,4 +25,39 @@ class Snapshot {
 
  protected:
   virtual ~Snapshot();
+};
+
+// Snapshots按照双向链表的形式存在于DB中
+// Snapshots are kept in a doubly-linked list in the DB.
+// Each SnapshotImpl corresponds to a particular sequence number.
+class SnapshotImpl : public Snapshot {
+ public:
+  SequenceNumber number_;  // const after creation
+  // It indicates the smallest uncommitted data at the time the snapshot was
+  // taken. This is currently used by WritePrepared transactions to limit the
+  // scope of queries to IsInSnapshot.
+  SequenceNumber min_uncommitted_ = kMinUnCommittedSeq;
+
+  SequenceNumber GetSequenceNumber() const override { return number_; }
+
+  int64_t GetUnixTime() const override { return unix_time_; }
+
+  uint64_t GetTimestamp() const override { return timestamp_; }
+
+ private:
+  friend class SnapshotList;
+
+  // 链表的前后节点
+  // SnapshotImpl is kept in a doubly-linked circular list
+  SnapshotImpl* prev_;
+  SnapshotImpl* next_;
+
+  SnapshotList* list_;  // just for sanity checks
+
+  int64_t unix_time_;
+
+  uint64_t timestamp_;
+
+  // Will this snapshot be used by a Transaction to do write-conflict checking?
+  bool is_write_conflict_boundary_;
 };
