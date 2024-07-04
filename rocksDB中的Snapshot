@@ -67,6 +67,23 @@ class SnapshotList {
  public:
   SnapshotList() {}
 
+  // 产生一个新的SnapshotImp实例
+  SnapshotImpl* New(SnapshotImpl* s, SequenceNumber seq, uint64_t unix_time,
+                    bool is_write_conflict_boundary,
+                    uint64_t ts = std::numeric_limits<uint64_t>::max()) {
+    s->number_ = seq;  // 序列号
+    s->unix_time_ = unix_time; // 时间
+    s->timestamp_ = ts;
+    s->is_write_conflict_boundary_ = is_write_conflict_boundary;
+    s->list_ = this;
+    s->next_ = &list_;
+    s->prev_ = list_.prev_;
+    s->prev_->next_ = s;
+    s->next_->prev_ = s;
+    count_++;
+    return s;
+  }
+
   // retrieve all snapshot numbers up until max_seq. They are sorted in
   // ascending order (with no duplicates).
   std::vector<SequenceNumber> GetAll(
@@ -121,3 +138,40 @@ class SnapshotList {
   uint64_t count_;
 };
 
+// All operations on TimestampedSnapshotList must be protected by db mutex.
+class TimestampedSnapshotList {
+ public:
+  void AddSnapshot(const std::shared_ptr<const SnapshotImpl>& snapshot) {
+    assert(snapshot);
+    snapshots_.try_emplace(snapshot->GetTimestamp(), snapshot);
+  }
+
+  // 根据时间戳来查询快照
+  std::shared_ptr<const SnapshotImpl> GetSnapshot(uint64_t ts) const {
+    // 时间戳是极大值，说明是初始化状态，否则返回最后一个节点
+    if (ts == std::numeric_limits<uint64_t>::max() && !snapshots_.empty()) {
+      auto it = snapshots_.rbegin();
+      assert(it != snapshots_.rend());
+      return it->second;
+    }
+    auto it = snapshots_.find(ts);
+    if (it == snapshots_.end()) {
+      return std::shared_ptr<const SnapshotImpl>();
+    }
+    return it->second;
+  }
+
+  void GetSnapshots(
+      uint64_t ts_lb, uint64_t ts_ub,
+      std::vector<std::shared_ptr<const Snapshot>>& snapshots) const {
+    assert(ts_lb < ts_ub);
+    auto it_low = snapshots_.lower_bound(ts_lb);
+    auto it_high = snapshots_.lower_bound(ts_ub);
+    for (auto it = it_low; it != it_high; ++it) {
+      snapshots.emplace_back(it->second);
+    }
+  }
+
+ private:
+  std::map<uint64_t, std::shared_ptr<const SnapshotImpl>> snapshots_;
+};
