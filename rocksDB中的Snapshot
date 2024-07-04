@@ -1,13 +1,16 @@
 相关文件：
 rocksdb/include/rocksdb/snapshot.h
 
+rocksdb/db/snapshot_impl.h
+rocksdb/db/snapshot_impl.cc
+
 // 序列号实际是1个uint64_t
 // Represents a sequence number in a WAL file.
 using SequenceNumber = uint64_t;
 
 
 // 快照是保存DB特定状态的一种句柄，不可被修改，线程安全
-// 快照 = 序列号 + unix_time + timestamp ?
+// 快照 = 日志序列号 + unix_time + timestamp ?
 // Abstract handle to particular state of a DB.
 // A Snapshot is an immutable object and can therefore be safely
 // accessed from multiple threads without any external synchronization.
@@ -175,3 +178,39 @@ class TimestampedSnapshotList {
  private:
   std::map<uint64_t, std::shared_ptr<const SnapshotImpl>> snapshots_;
 };
+
+// 资源获取即初始化
+// Simple RAII wrapper class for Snapshot.
+// Constructing this object will create a snapshot.  Destructing will
+// release the snapshot.
+class ManagedSnapshot {
+ public:
+  explicit ManagedSnapshot(DB* db);
+
+  // Instead of creating a snapshot, take ownership of the input snapshot.
+  ManagedSnapshot(DB* db, const Snapshot* _snapshot);
+
+  ~ManagedSnapshot();
+
+  const Snapshot* snapshot();
+
+ private:
+  DB* db_;
+  const Snapshot* snapshot_;
+};
+
+// 构造函数
+ManagedSnapshot::ManagedSnapshot(DB* db)
+    : db_(db), snapshot_(db->GetSnapshot()) {}
+
+// 构造函数
+ManagedSnapshot::ManagedSnapshot(DB* db, const Snapshot* _snapshot)
+    : db_(db), snapshot_(_snapshot) {}
+
+ManagedSnapshot::~ManagedSnapshot() {
+  if (snapshot_) {
+    db_->ReleaseSnapshot(snapshot_);
+  }
+}
+
+const Snapshot* ManagedSnapshot::snapshot() { return snapshot_; }
