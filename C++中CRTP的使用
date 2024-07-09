@@ -1,5 +1,7 @@
 CRTP是Curiously Recurring Template Pattern的缩写，中文译为奇异的递归模板模式，是由James O. Coplien在其1995年的论文中首次提出。
 
+为什么会用到奇异递归模板？——利用静态（编译期）多态避免虚函数调用的开销，虚函数不能被声明为inline
+
 wikipedia给出了CRTP的一般形式，如下：
 
 // The Curiously Recurring Template Pattern (CRTP)
