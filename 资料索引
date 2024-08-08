@@ -33,6 +33,7 @@ kvm创建VM的过程：https://mp.weixin.qq.com/s?__biz=MzkwOTE2MzkyMQ==&mid=224
 5.开源代码
 hash表实现：https://github.com/taosdata/TDengine/blob/main/source/util/src/thash.c#L138
 brpc中iobuf的实现：https://github.com/carlvinhust2012/brpc/blob/master/src/butil/iobuf.h
+folly中iobuf的实现：https://github.com/facebook/folly/blob/9c4689d361c69d156d4a6245fa625b0ea2f875e7/folly/io/IOBuf.cpp#L543
 nccl通信库源码分析：https://juejin.cn/post/7210604962774302776
 
 6.性能优化相关
