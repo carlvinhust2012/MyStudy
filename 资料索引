@@ -6,6 +6,8 @@ spdk的框架&&功能模块：https://www.cnblogs.com/arcing/p/14061815.html
 spdk中qos机制：https://zhuanlan.zhihu.com/p/547771058
 dpdk收包流程：https://zhuanlan.zhihu.com/p/692774865
 Qemu与Librbd的QoS机制比较：https://www.modb.pro/db/135610
+分布式存储限速(Qos)设计：https://zhuanlan.zhihu.com/p/450656361
+5种限速算法介绍：https://www.cnblogs.com/liqiangchn/p/14253924.html
 nvme概念：https://www.snia.org/education/what-is-nvme-of
 raft原理简介：https://blog.csdn.net/waltonhuang/article/details/106013797?spm=1001.2101.3001.6650.2&utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-2-106013797-blog-123834901.235%5Ev43%5Econtrol&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-2-106013797-blog-123834901.235%5Ev43%5Econtrol&utm_relevant_index=3
 
