@@ -5,6 +5,7 @@ https://accelazh.github.io/tags.html#storage-ref
 spdk的框架&&功能模块：https://www.cnblogs.com/arcing/p/14061815.html
 spdk中qos机制：https://zhuanlan.zhihu.com/p/547771058
 dpdk收包流程：https://zhuanlan.zhihu.com/p/692774865
+Qemu与Librbd的QoS机制比较：https://www.modb.pro/db/135610
 
 2.dpu && rdma相关文档
 ——概念性比较强，细节没有详细描述
@@ -13,6 +14,8 @@ https://cloud.tencent.com/developer/article/2304247
 rdma相关指南+论文：
 https://github.com/StarryVae/RDMA-tutorial/blob/master/tutorial.md
 https://github.com/StarryVae/RDMA-tutorial/blob/master/paper/pdf/FaSST-A.pdf
+使用Xilinx IP核进行PCIE开发学习笔记：
+https://zhuanlan.zhihu.com/p/32786076
 
 3.ext4文件系统
 https://blogs.oracle.com/linux/post/understanding-ext4-disk-layout-part-1
