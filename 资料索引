@@ -17,7 +17,9 @@ https://github.com/StarryVae/RDMA-tutorial/blob/master/paper/pdf/FaSST-A.pdf
 https://blogs.oracle.com/linux/post/understanding-ext4-disk-layout-part-1
 https://github.com/c-rainstorm/blog/blob/master/os/FileSystem-Ext4.md
 
-4.nccl通信库学习
+4.虚拟化相关
+virtio协议解读（很详细）：https://blogs.oracle.com/linux/post/introduction-to-virtio
+kvm创建VM的过程：https://mp.weixin.qq.com/s?__biz=MzkwOTE2MzkyMQ==&mid=2247483715&idx=1&sn=81883f1c02ca1d8ec109011bdb27adbc&chksm=c13fadbdf64824ab184490fe0b315d11102c6af15e75186639d15fa3d686b5bef1aa64db6815&token=640500596&lang=zh_CN#rd
 
 
 5.开源代码
