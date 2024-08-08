@@ -4,6 +4,7 @@ https://accelazh.github.io/tags.html#storage-ref
 阿里盘古：https://zhuanlan.zhihu.com/p/622339954
 spdk的框架&&功能模块：https://www.cnblogs.com/arcing/p/14061815.html
 spdk中qos机制：https://zhuanlan.zhihu.com/p/547771058
+dpdk收包流程：https://zhuanlan.zhihu.com/p/692774865
 
 2.dpu && rdma相关文档
 ——概念性比较强，细节没有详细描述
