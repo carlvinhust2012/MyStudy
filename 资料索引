@@ -10,6 +10,7 @@ Qemu与Librbd的QoS机制比较：https://www.modb.pro/db/135610
 分布式存储限速(Qos)设计：https://zhuanlan.zhihu.com/p/450656361
 5种限速算法介绍：https://www.cnblogs.com/liqiangchn/p/14253924.html
 nvme概念：https://www.snia.org/education/what-is-nvme-of
+基于NVMe存储的高性能存储引擎：https://www.gaitpu.com/data-center/storage/high-performance-io-for-high-performance-storage-engines
 raft原理简介：https://blog.csdn.net/waltonhuang/article/details/106013797?spm=1001.2101.3001.6650.2&utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-2-106013797-blog-123834901.235%5Ev43%5Econtrol&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-2-106013797-blog-123834901.235%5Ev43%5Econtrol&utm_relevant_index=3
 raft中的JOINT-CONSENSUS：https://github.com/peterbourgon/raft/blob/master/JOINT-CONSENSUS.md
 快照：https://cloud.tencent.com/developer/article/1158686
