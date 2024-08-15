@@ -45,6 +45,7 @@ nccl通信库源码分析：https://juejin.cn/post/7210604962774302776
 prometheus客户端源码：https://github.com/digitalocean/prometheus-client-c/blob/master/example/main.c
 fio使用说明：
 https://halysl.github.io/2020/05/12/fio%E6%B5%8B%E8%AF%95%E7%A3%81%E7%9B%98%E6%80%A7%E8%83%BD/#%E4%BD%BF%E7%94%A8-fio-%E6%B5%8B%E8%AF%95%E7%A3%81%E7%9B%98-io-%E6%80%A7%E8%83%BD
+perf工具: https://cloud.tencent.com/developer/article/2245316
 
 7.开发工具
 git打patch指南： https://www.cnblogs.com/ArsenalfanInECNU/p/8931377.html
