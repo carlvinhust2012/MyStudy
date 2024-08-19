@@ -56,3 +56,4 @@ spdk概述：https://rootw.github.io/2018/05/SPDK-all/
 spdk io栈与线程模型：https://rootw.github.io/2018/05/SPDK-iostack/
 spdk中io机制：https://rootw.github.io/2018/05/SPDK-ioanalyze/
 spdk中bdev子系统：ttps://rootw.github.io/2018/05/SPDK-subsys-bdev/
+spdk中vhost子系统：https://rootw.github.io/2018/05/SPDK-subsys-vhost/
