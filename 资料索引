@@ -5,6 +5,7 @@ leveldb源码：https://github.com/balloonwj/CppGuide/tree/master/articles/level
 阿里盘古：https://zhuanlan.zhihu.com/p/622339954
 spdk的框架&&功能模块：https://www.cnblogs.com/arcing/p/14061815.html
 spdk中qos机制：https://zhuanlan.zhihu.com/p/547771058
+spdk的nvme层：https://hackmd.io/@Hyam/spdk_test#nvme-layer
 dpdk收包流程：https://zhuanlan.zhihu.com/p/692774865
 Qemu与Librbd的QoS机制比较：https://www.modb.pro/db/135610
 分布式存储限速(Qos)设计：https://zhuanlan.zhihu.com/p/450656361
