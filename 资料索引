@@ -3,10 +3,6 @@ https://accelazh.github.io/
 https://accelazh.github.io/tags.html#storage-ref
 leveldb源码：https://github.com/balloonwj/CppGuide/tree/master/articles/leveldb%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90
 阿里盘古：https://zhuanlan.zhihu.com/p/622339954
-spdk的框架&&功能模块：https://www.cnblogs.com/arcing/p/14061815.html
-spdk中qos机制：https://zhuanlan.zhihu.com/p/547771058
-spdk的nvme层：https://hackmd.io/@Hyam/spdk_test#nvme-layer
-spdk中的bdev io机制：https://rootw.github.io/2018/05/SPDK-ioanalyze/
 dpdk收包流程：https://zhuanlan.zhihu.com/p/692774865
 Qemu与Librbd的QoS机制比较：https://www.modb.pro/db/135610
 分布式存储限速(Qos)设计：https://zhuanlan.zhihu.com/p/450656361
@@ -51,3 +47,12 @@ perf工具: https://cloud.tencent.com/developer/article/2245316
 
 7.开发工具
 git打patch指南： https://www.cnblogs.com/ArsenalfanInECNU/p/8931377.html
+
+8.spdk相关
+spdk的框架&&功能模块：https://www.cnblogs.com/arcing/p/14061815.html
+spdk中qos机制：https://zhuanlan.zhihu.com/p/547771058
+spdk的nvme层：https://hackmd.io/@Hyam/spdk_test#nvme-layer
+spdk概述：https://rootw.github.io/2018/05/SPDK-all/
+spdk io栈与线程模型：https://rootw.github.io/2018/05/SPDK-iostack/
+spdk中io机制：https://rootw.github.io/2018/05/SPDK-ioanalyze/
+spdk中bdev子系统：ttps://rootw.github.io/2018/05/SPDK-subsys-bdev/
