@@ -3,7 +3,6 @@ https://accelazh.github.io/
 https://accelazh.github.io/tags.html#storage-ref
 leveldb源码：https://github.com/balloonwj/CppGuide/tree/master/articles/leveldb%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90
 阿里盘古：https://zhuanlan.zhihu.com/p/622339954
-dpdk收包流程：https://zhuanlan.zhihu.com/p/692774865
 Qemu与Librbd的QoS机制比较：https://www.modb.pro/db/135610
 分布式存储限速(Qos)设计：https://zhuanlan.zhihu.com/p/450656361
 5种限速算法介绍：https://www.cnblogs.com/liqiangchn/p/14253924.html
@@ -58,3 +57,7 @@ spdk中vhost子系统：https://rootw.github.io/2018/05/SPDK-subsys-vhost/
 基于spdk的nvme驱动：https://oniscoidea15.rssing.com/chan-8758809/article97.html
 nvme概念：https://www.snia.org/education/what-is-nvme-of
 基于NVMe存储的高性能存储引擎：https://www.gaitpu.com/data-center/storage/high-performance-io-for-high-performance-storage-engines
+
+9.dpdk相关
+dpdk收包流程：https://zhuanlan.zhihu.com/p/692774865
+dpdk内存池：https://blog.csdn.net/anyegongjuezjd/article/details/136270856?spm=1001.2101.3001.6650.14&utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7ERate-14-136270856-blog-123111464.235%5Ev43%5Econtrol&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7ERate-14-136270856-blog-123111464.235%5Ev43%5Econtrol&utm_relevant_index=18
