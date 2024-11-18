@@ -44,6 +44,7 @@ perf工具: https://cloud.tencent.com/developer/article/2245316
 
 7.开发工具
 git打patch指南： https://www.cnblogs.com/ArsenalfanInECNU/p/8931377.html
+journal日志：https://cloud.tencent.com/developer/article/2089586
 
 8.spdk相关
 spdk的框架&&功能模块：https://www.cnblogs.com/arcing/p/14061815.html
@@ -61,3 +62,9 @@ nvme概念：https://www.snia.org/education/what-is-nvme-of
 9.dpdk相关
 dpdk收包流程：https://zhuanlan.zhihu.com/p/692774865
 dpdk内存池：https://blog.csdn.net/anyegongjuezjd/article/details/136270856?spm=1001.2101.3001.6650.14&utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7ERate-14-136270856-blog-123111464.235%5Ev43%5Econtrol&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7ERate-14-136270856-blog-123111464.235%5Ev43%5Econtrol&utm_relevant_index=18
+
+10.doris相关
+Doris源码解析[一、负载均衡] https://wingsgo.github.io/2020/02/24/doris-01-cluster_balance.html
+Doris源码解析[二、异步任务之Schema Change] https://wingsgo.github.io/2020/02/24/doris-02-schema_change_task.html
+Doris源码解析[三、BE存储引擎] https://wingsgo.github.io/2020/02/24/doris-03-be_refactor_2019.html
+存储布局：https://xie.infoq.cn/article/4f7d09d6185fb3055d4e7e51c
