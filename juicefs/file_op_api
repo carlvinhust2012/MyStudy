@@ -1,5 +1,7 @@
 定义了一批文件操作的api
 https://github.com/carlvinhust2012/juicefs/blob/main/pkg/fs/fs.go#L160
+单元测试，里面有各个接口的使用
+https://github.com/carlvinhust2012/juicefs/blob/main/pkg/fs/fs_test.go#L35
 
 type FileStat struct {
 	name  string     // filename？
