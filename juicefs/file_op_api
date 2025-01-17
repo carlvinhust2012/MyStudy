@@ -1,1 +1,8 @@
+定义了一批文件操作的api
 https://github.com/carlvinhust2012/juicefs/blob/main/pkg/fs/fs.go#L160
+
+type FileStat struct {
+	name  string     // filename？
+	inode Ino        // similar to linux ext4 inode
+	attr  *Attr      // attribute
+}
