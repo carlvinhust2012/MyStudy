@@ -1,3 +1,5 @@
+代码仓库：https://github.com/minio/minio
+
 MinIO 的源码结构清晰且功能模块化，以下是其主要结构和组件的介绍：
 
 1. 主入口
