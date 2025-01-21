@@ -1,0 +1,33 @@
+MinIO 的源码结构清晰且功能模块化，以下是其主要结构和组件的介绍：
+
+1. 主入口
+MinIO 的主入口位于 cmd/main.go 文件中，这是 MinIO 服务器的启动入口。
+它负责初始化应用程序、设置日志、处理命令行参数，并启动 MinIO 服务。
+
+2. 核心组件
+cmd/：包含 MinIO 的核心命令和服务器逻辑，如 erasure-server-pool.go，它实现了纠删码存储功能，是 MinIO 分布式存储的核心。
+cmd/api/：定义了 MinIO 的 API 接口，包括 S3 兼容的 API 实现。
+cmd/fs/：处理文件系统相关的操作，如文件的读写、目录的管理等。
+cmd/object/：管理对象存储的核心逻辑，包括对象的创建、删除、查询等操作。
+
+3. 存储和数据管理
+cmd/erasure/：实现了纠删码算法，用于数据的冗余存储和恢复。
+cmd/erasure/v2/：提供了纠删码的第二代实现，优化了性能和可靠性。
+cmd/data/：处理数据的存储和检索，包括对象的元数据管理。
+
+4. 网络和通信
+cmd/http/：实现了 HTTP 服务器和客户端逻辑，用于处理网络请求。
+cmd/auth/：负责用户认证和授权，确保数据的安全访问。
+
+5. 工具和辅助功能
+cmd/mc/：MinIO 的命令行工具，用于管理 MinIO 服务器。
+cmd/minio-js/：MinIO 的 JavaScript 客户端 SDK。
+cmd/minio-py/：MinIO 的 Python 客户端 SDK。
+
+6. 其他
+cmd/minio-go/：MinIO 的 Go 客户端 SDK。
+cmd/minio-cpp/：MinIO 的 C++ 客户端 SDK。
+cmd/minio-java/：MinIO 的 Java 客户端 SDK。
+
+MinIO 的源码结构设计合理，便于开发者理解和扩展。
+其核心功能集中在 cmd/ 目录下，而各种客户端 SDK 则分布在不同的子目录中。
