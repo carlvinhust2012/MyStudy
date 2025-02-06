@@ -5,4 +5,3 @@
 [5] https://www.kernel.org/doc/Documentation/admin-guide/iostats.rst
 [6] https://kudzia.eu/b/2019/09/iostat-x-1-reporting-100-utilization-of-nearly-idle-nvme-drives/
 [6] https://man7.org/linux/man-pages/man1/iostat.1.html
-[7] https://open.codehub.huawei.com/OpenSourceCenter/openEuler-source/kernel/files?ref=huawei/5.10.0-60.18.0.50.oe2203&filePath=block/blk-io-hierarchy
