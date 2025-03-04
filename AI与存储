@@ -8,3 +8,6 @@
 ——结构化和非结构化的数据共存，能够支持大容量、小文件等随机访问，提供更低的时延和qos。
 
 上一代分布式存储系统的设计中，比如 GlusterFS，CephFS，还有面向 HPC 领域的 Lustre， BeeGFS 和 GPFS ，大多采用全闪方案构建。
+
+全新的SanDisk DC SN861 NVMe SSD企业级PCIe Gen 5.0解决方案
+
