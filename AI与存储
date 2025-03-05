@@ -10,4 +10,6 @@
 上一代分布式存储系统的设计中，比如 GlusterFS，CephFS，还有面向 HPC 领域的 Lustre， BeeGFS 和 GPFS ，大多采用全闪方案构建。
 
 全新的SanDisk DC SN861 NVMe SSD企业级PCIe Gen 5.0解决方案
+相较于前代PCIe 4.0，PCIe Gen 5.0带宽几乎翻倍，达到了32 GT/s（千兆传输率每秒），这意味着数据传输速度的大幅提升。
+在AI领域，尤其是模型训练和推理过程中，需要处理海量的数据，并在处理器、图形处理单元（GPU）和专用AI加速器之间迅速传输。
 
