@@ -1,0 +1,84 @@
+C++14 是 C++11 的一个小规模更新，它在 C++11 的基础上引入了一些改进和新特性，但没有像 C++11 那样引入大量的新功能。以下是一些 C++14 相对于 C++11 的主要变化：
+
+### 1. **通用属性（Generalized Attributes）**
+C++14 引入了通用属性，允许程序员使用标准的属性语法来修饰代码，而这些属性的具体含义由编译器定义。例如：
+```cpp
+[[noreturn]] void myFunction() {
+    throw std::runtime_error("Error");
+}
+```
+这里 `[[noreturn]]` 表示该函数不会返回。
+
+### 2. **变量模板（Variable Templates）**
+C++14 允许定义变量模板，这使得模板编程更加灵活。例如：
+```cpp
+template<typename T>
+constexpr T pi = T(3.1415926535897932385);
+```
+这样可以定义不同类型的 `pi` 常量。
+
+### 3. **返回类型后置（Return Type After Parameter List）**
+C++14 允许在函数参数列表之后指定返回类型，这在编写复杂的函数时可以提高可读性。例如：
+```cpp
+auto myFunction(int x) -> int {
+    return x * 2;
+}
+```
+
+### 4. **标准库改进**
+C++14 对标准库进行了多项改进，包括：
+- **`std::make_unique`**：类似于 `std::make_shared`，但用于 `std::unique_ptr`。
+- **`std::exchange`**：用于交换两个变量的值。
+- **`std::integer_sequence`**：用于生成整数序列。
+- **`std::optional`**：表示可能有值也可能没有值的类型。
+- **`std::any`**：表示可以存储任何类型的值。
+
+### 5. **Lambda 表达式的改进**
+C++14 允许在 Lambda 表达式中使用 `auto` 类型推导，使得 Lambda 表达式的语法更加简洁。例如：
+```cpp
+auto lambda = [](auto x, auto y) { return x + y; };
+```
+
+### 6. **constexpr 的改进**
+C++14 放宽了 `constexpr` 的限制，允许在 `constexpr` 函数中使用更多的语句类型，例如循环和递归。例如：
+```cpp
+constexpr int factorial(int n) {
+    return n <= 1 ? 1 : n * factorial(n - 1);
+}
+```
+
+### 7. **用户自定义字面量的改进**
+C++14 允许用户自定义字面量操作符接受任意类型的参数，而不仅仅是整数或浮点数。例如：
+```cpp
+struct Length {
+    int value;
+    Length(int v) : value(v) {}
+};
+
+Length operator"" _m(long double v) {
+    return Length(static_cast<int>(v));
+}
+
+auto length = 10.0_m; // length 是 Length 类型
+```
+
+### 8. **二进制字面量**
+C++14 引入了二进制字面量，允许直接以二进制形式书写数字。例如：
+```cpp
+int x = 0b1010; // x 的值为 10
+```
+
+### 9. **新的标准库算法**
+C++14 引入了一些新的标准库算法，例如：
+- **`std::all_of`**：检查范围内的所有元素是否满足条件。
+- **`std::any_of`**：检查范围内是否有元素满足条件。
+- **`std::none_of`**：检查范围内是否没有元素满足条件。
+
+### 10. **对齐控制**
+C++14 引入了 `alignas` 和 `alignof` 关键字，用于控制变量的对齐方式。例如：
+```cpp
+alignas(64) int x; // x 的内存对齐为 64 字节
+```
+
+### 总结
+C++14 在 C++11 的基础上进行了一系列改进，增强了语言的灵活性和表达能力，同时对标准库进行了多项增强。这些改进使得 C++14 更加适合现代编程需求，特别是在模板编程、Lambda 表达式和标准库的使用上。
