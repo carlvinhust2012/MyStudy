@@ -1,0 +1,6 @@
+1.引入多线程 std::thread 、std::promise、std::future、std::conditional
+2.智能指针std::unique_ptr、std::shared_ptr、std::weak_ptr
+3.移动语义std::move、左值、右值
+4.变长模板template <arg1, arg2, arg3,...>
+5.lamda表达式,std::bind、std::function 
+6.final、override、delete、default
