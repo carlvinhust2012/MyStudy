@@ -1,0 +1,141 @@
+C++17 是 C++11 的一次重大更新，它不仅引入了许多新特性，还对语言和标准库进行了大量改进。以下是 C++17 相对于 C++11 的主要变化：
+
+### 语言特性
+1. **结构化绑定（Structured Bindings）**
+   - 允许从元组、结构体或数组中直接解构多个值。
+   ```cpp
+   std::pair<int, std::string> p = {1, "hello"};
+   auto [id, message] = p;
+   std::cout << id << ' ' << message << std::endl;  // 输出: 1 hello
+   ```
+
+2. **`if constexpr`**
+   - 在编译时进行条件判断，允许在模板中根据类型条件编译不同的代码。
+   ```cpp
+   template<typename T>
+   void foo(T x) {
+       if constexpr (std::is_integral_v<T>) {
+           std::cout << "Integer: " << x << std::endl;
+       } else {
+           std::cout << "Non-integer: " << x << std::endl;
+       }
+   }
+   ```
+
+3. **折叠表达式（Fold Expressions）**
+   - 简化了可变参数模板的使用，允许对参数包进行展开操作。
+   ```cpp
+   template <typename ... Ts>
+   auto sum(Ts ... ts) {
+       return (ts + ...);
+   }
+   ```
+
+4. **constexpr 的扩展**
+   - 允许在更多场景中使用 `constexpr`，包括 Lambda 表达式。
+   ```cpp
+   constexpr auto lamb = [] (int n) { return n * n; };
+   static_assert(lamb(3) == 9, "a");
+   ```
+
+5. **新的标准属性**
+   - 引入了如 `[[nodiscard]]`、`[[maybe_unused]]` 和 `[[fallthrough]]` 等属性。这些属性可以用于提供更明确的编译器警告和意图表达。
+
+6. **内联变量（Inline Variables）**
+   - 允许在类中定义内联变量，这使得变量可以在头文件中定义而不会导致链接问题。
+
+7. **保证拷贝省略（Guaranteed Copy Elision）**
+   - 在更多场景下避免不必要的拷贝，提高性能。
+
+8. **十六进制浮点字面量**
+   - 支持以十六进制形式表示浮点数。
+   ```cpp
+   double d = 0x1.0p-1;  // 0.5
+   ```
+
+9. **UTF-8 字面量**
+   - 支持 UTF-8 编码的字符串字面量。
+   ```cpp
+   std::string s = u8"你好，世界！";
+   ```
+
+### 标准库特性
+1. **文件系统库（Filesystem Library）**
+   - 引入了 `std::filesystem`，用于操作文件和目录。
+   ```cpp
+   #include <filesystem>
+   namespace fs = std::filesystem;
+
+   void list_files(const std::string& path) {
+       for (const auto& entry : fs::directory_iterator(path)) {
+           std::cout << entry.path() << std::endl;
+       }
+   }
+   ```
+
+2. **并行算法（Parallel Algorithms）**
+   - 标准库中的算法现在可以并行执行，通过指定执行策略。
+   ```cpp
+   #include <algorithm>
+   #include <vector>
+   #include <execution>
+
+   std::vector<int> v = {1, 2, 3, 4, 5};
+   std::for_each(std::execution::par, v.begin(), v.end(), [](int& x) {
+       x *= 2;
+   });
+   ```
+
+3. **`std::optional`、`std::variant` 和 `std::any`**
+   - 提供了更灵活的类型安全机制。
+   ```cpp
+   std::optional<int> maybe_int = 42;
+   if (maybe_int) {
+       std::cout << *maybe_int << std::endl;  // 输出: 42
+   }
+   ```
+
+4. **`std::string_view`**
+   - 提供了一种轻量级的字符串视图，避免不必要的拷贝。
+   ```cpp
+   std::string s = "hello";
+   std::string_view sv = s;
+   std::cout << sv << std::endl;  // 输出: hello
+   ```
+
+5. **多态分配器（Polymorphic Allocators）**
+   - 支持更灵活的内存分配策略。
+
+### 其他改进
+1. **初始化列表的改进**
+   - 允许在更多场景中使用初始化列表。
+   ```cpp
+   std::vector<int> v{1, 2, 3, 4, 5};
+   ```
+
+2. **模板的改进**
+   - 支持 `template <typename...>` 的省略号语法。
+   ```cpp
+   template <typename... Args>
+   void foo(Args... args) {
+       // ...
+   }
+   ```
+
+3. **Lambda 表达式的改进**
+   - 允许在 Lambda 表达式中捕获 `this`。
+   ```cpp
+   class A {
+   public:
+       void bar() {
+           auto lambda = [this] { this->foo(); };
+       }
+       void foo() { std::cout << "foo" << std::endl; }
+   };
+   ```
+
+4. **`std::variant` 和 `std::optional` 的改进**
+   - 提供了更灵活的类型安全机制。
+
+### 总结
+C++17 在 C++11 的基础上进行了多项改进，不仅增强了语言的功能，还简化了语法，提高了代码的可读性和可维护性。这些特性使得 C++17 更适合现代编程需求，特别是在并发编程、模板编程和标准库的使用上。
