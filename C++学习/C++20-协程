@@ -1,0 +1,57 @@
+#include <iostream>
+#include <coroutine>
+#include <future>
+#include <thread>
+#include <chrono>
+
+// 定义一个日志协程
+struct LogCoroutine {
+    struct promise_type {
+        LogCoroutine get_return_object() {
+            return LogCoroutine(std::coroutine_handle<promise_type>::from_promise(*this));
+        }
+
+        std::suspend_never initial_suspend() { return {}; }
+        std::suspend_never final_suspend() noexcept { return {}; }
+
+        void unhandled_exception() { std::terminate(); }
+        void return_void() {}
+
+        // 存储日志消息
+        std::string message;
+    };
+
+    std::coroutine_handle<promise_type> handle;
+
+    LogCoroutine(std::coroutine_handle<promise_type> h) : handle(h) {}
+
+    ~LogCoroutine() {
+        if (handle) {
+            handle.destroy();
+        }
+    }
+
+    void operator()() {
+        handle.resume();
+    }
+};
+
+// 日志打印协程函数
+LogCoroutine logMessage(const std::string& message) {
+    std::cout << "Logging: " << message << std::endl;
+    std::this_thread::sleep_for(std::chrono::seconds(1)); // 模拟日志打印的延迟
+    co_return;
+}
+
+int main() {
+    // 启动日志协程
+    auto logTask = logMessage("Hello, Coroutine!");
+
+    // 运行协程
+    logTask();
+
+    // 等待协程完成
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    return 0;
+}
