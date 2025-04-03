@@ -41,3 +41,63 @@
 - 在使用这种指令时，需要确保内存地址 `%rip + 0x35e5b` 是有效的，并且有足够的权限进行写操作。
 
 通过这条指令，程序可以在运行时动态地修改内存中的数据，这在很多场景下都非常有用，比如更新计数器、修改状态标志等。
+
+
+`vpclmullqhqdq %zmm16,%zmm0,%zmm1` 是一条 AVX-512 指令，用于执行多项式乘法。具体来说，这条指令对两个 512 位的向量寄存器中的数据进行多项式乘法运算，并将结果存储在目标寄存器中。
+
+### 具体解析
+1. **`vpclmullqhqdq`**：
+   - 这是一条 AVX-512 指令，用于执行多项式乘法。
+   - 它对两个 512 位的向量寄存器中的数据进行多项式乘法运算。
+
+2. **`%zmm16`**：
+   - 这是源操作数之一，是一个 512 位的向量寄存器。
+
+3. **`%zmm0`**：
+   - 这是另一个源操作数，也是一个 512 位的向量寄存器。
+
+4. **`%zmm1`**：
+   - 这是目标操作数，是一个 512 位的向量寄存器。
+
+### 作用
+- 这条指令将 `%zmm16` 和 `%zmm0` 中的数据进行多项式乘法运算，并将结果存储在 `%zmm1` 中。
+- 它通常用于加密算法和其他需要多项式运算的场景。
+
+通过这条指令，程序可以高效地执行多项式乘法运算，这在许多高性能计算场景中非常有用。
+
+
+0000000000000069 <crc32_iscsi_by16_10.fold_256_B_loop>:
+  69:   48 81 c7 00 01 00 00    add    $0x100,%rdi                     #将立即数 0x100（十六进制数，相当于十进制的 256）加到寄存器 %rdi 的值上，并将结果存回 %rdi 寄存器
+  70:   62 f1 7f 48 6f 1f       vmovdqu8 (%rdi),%zmm3                  #从内存地址 %rdi 处加载 64 字节（512 位）的数据到 %zmm3 寄存器中
+  76:   62 b3 7d 48 44 c8 10    vpclmullqhqdq %zmm16,%zmm0,%zmm1       #对两个 512 位的向量寄存器 %zmm16 和 %zmm0 中的数据进行多项式乘法运算，并将结果存储在 %zmm1 寄存器中
+  7d:   62 b3 7d 48 44 d0 01    vpclmulhqlqdq %zmm16,%zmm0,%zmm2       #对两个 512 位的向量寄存器 %zmm16 和 %zmm0 中的数据进行多项式乘法运算，并将结果存储在 %zmm2 寄存器中
+  84:   62 f1 f5 48 ef c2       vpxorq %zmm2,%zmm1,%zmm0               #对两个 512 位的向量寄存器%zmm2,%zmm1中的数据执行按位异或（XOR）操作，并将结果存储在目标寄存器%zmm0中
+  8a:   62 f1 fd 48 ef c3       vpxorq %zmm3,%zmm0,%zmm0               #对两个 512 位的向量寄存器%zmm3,%zmm0中的数据执行按位异或（XOR）操作，并将结果存储在目标寄存器%zmm0中
+  90:   62 71 7f 48 6f 4f 01    vmovdqu8 0x40(%rdi),%zmm9
+  97:   62 b3 5d 48 44 e8 10    vpclmullqhqdq %zmm16,%zmm4,%zmm5
+  9e:   62 b3 5d 48 44 f0 01    vpclmulhqlqdq %zmm16,%zmm4,%zmm6
+  a5:   62 f1 d5 48 ef e6       vpxorq %zmm6,%zmm5,%zmm4
+  ab:   62 d1 dd 48 ef e1       vpxorq %zmm9,%zmm4,%zmm4
+  b1:   62 71 7f 48 6f 5f 02    vmovdqu8 0x80(%rdi),%zmm11
+  b8:   62 33 45 48 44 e0 10    vpclmullqhqdq %zmm16,%zmm7,%zmm12
+  bf:   62 33 45 48 44 e8 01    vpclmulhqlqdq %zmm16,%zmm7,%zmm13
+  c6:   62 d1 9d 48 ef fd       vpxorq %zmm13,%zmm12,%zmm7
+  cc:   62 d1 c5 48 ef fb       vpxorq %zmm11,%zmm7,%zmm7
+  d2:   62 e1 7f 48 6f 4f 03    vmovdqu8 0xc0(%rdi),%zmm17
+  d9:   62 33 3d 48 44 f0 10    vpclmullqhqdq %zmm16,%zmm8,%zmm14
+  e0:   62 33 3d 48 44 f8 01    vpclmulhqlqdq %zmm16,%zmm8,%zmm15
+  e7:   62 51 8d 48 ef c7       vpxorq %zmm15,%zmm14,%zmm8
+  ed:   62 31 bd 48 ef c1       vpxorq %zmm17,%zmm8,%zmm8
+  f3:   48 81 ee 00 01 00 00    sub    $0x100,%rsi
+  fa:   0f 8d 69 ff ff ff       jge    69 <crc32_iscsi_by16_10.fold_256_B_loop>  #Jump if Greater or Equal, 程序的执行流程将跳转到地址 69 处的 <crc32_iscsi_by16_10.fold_256_B_loop> 标签处继续执行
+ 100:   48 81 c7 00 01 00 00    add    $0x100,%rdi
+ 107:   62 d3 7d 48 44 ca 01    vpclmulhqlqdq %zmm10,%zmm0,%zmm1
+ 10e:   62 d3 7d 48 44 d2 10    vpclmullqhqdq %zmm10,%zmm0,%zmm2
+ 115:   62 f3 f5 48 25 fa 96    vpternlogq $0x96,%zmm2,%zmm1,%zmm7
+ 11c:   62 d3 5d 48 44 ea 01    vpclmulhqlqdq %zmm10,%zmm4,%zmm5
+ 123:   62 d3 5d 48 44 f2 10    vpclmullqhqdq %zmm10,%zmm4,%zmm6
+ 12a:   62 73 d5 48 25 c6 96    vpternlogq $0x96,%zmm6,%zmm5,%zmm8
+ 131:   62 f1 7d 48 6f c7       vmovdqa32 %zmm7,%zmm0
+ 137:   62 d1 7d 48 6f e0       vmovdqa32 %zmm8,%zmm4
+ 13d:   48 81 c6 80 00 00 00    add    $0x80,%rsi
+ 144:   eb 58                   jmp    19e <crc32_iscsi_by16_10.fold_128_B_register>
