@@ -1,3 +1,6 @@
+isa-l如何计算crc？
+https://github.com/intel/isa-l/blob/master/crc/crc32_iscsi_by16_10.asm
+
 `jmp *0x355be7a(%rip)` 是一条 x86-64 汇编指令，用于无条件跳转到指定的内存地址。这条指令的语义是将程序的执行流程跳转到由 `0x355be7a(%rip)` 指定的地址。
 
 ### 具体解析
