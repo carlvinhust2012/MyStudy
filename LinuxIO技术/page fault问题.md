@@ -30,10 +30,35 @@ Linux会产生一个hard page fault中断。
 然后进程才能访问这部分虚拟地址空间的内存。
 
 page fault 又分为几种，major page fault、 minor page fault、 invalid(segment fault)。
-
 major page fault也称为hard page fault, 指需要访问的内存不在虚拟地址空间，也不在物理内存中，需要从慢速设备载入。从swap回到物理内存也是hard page fault。
-
 minor page fault也称为soft page fault, 指需要访问的内存不在虚拟地址空间，但是在物理内存中，只需要MMU建立物理内存和虚拟地址空间的映射关系即可。
 （通常是多个进程访问同一个共享内存中的数据，可能某些进程还没有建立起映射关系，所以访问时会出现soft page fault）
-
 invalid fault也称为segment fault, 指进程需要访问的内存地址不在它的虚拟地址空间范围内，属于越界访问，内核会报segment fault错误。
+
+
+什么是进程的working set ？
+进程的working set是指当前在物理内存中，属于该进程的pages组成的集合。
+这个集合中的page数随着系统的运行，可能扩大也可能缩小。
+扩大working set是指进程正在访问更多的内存时。
+缩小working set是指其他进程正在访问更多的内存，并且整个物理内存的空间不足，需要将某些干净的内存页free掉或者一些脏的内存页swap到交换分区去，如果这个操作设计到当前进程，对当前进程来说就是shrink working set。
+缩小working set需要遵循lru (内核的内存老化)算法，并不是随便挑选PAGE进行shrink的。
+
+什么是swap ？
+swap和前面提到的shrink working set有关，如果是干净页（即从读入虚拟地址空间后，没有修改过的页），则直接标记为free，不需要写盘，也不会发生swap。
+如果是脏页，那么它需要写盘，或者需要swap 到交换分区。
+
+如何优化swap ？
+建议使用IOPS和读写带宽很高的盘作为SWAP分区，例如PCI-E SSD。
+
+什么时候需要加内存？
+如果你发现经常发生swap in , out。
+说明进程的脏页被换出到swap后，紧接着这些页可能又需要被进程访问，从而这些页需要从swap写入物理内存，发生了hard page fault。
+这种情况下，你就需要加内存了，确实是内存不够用了。
+hard page fault非常损耗性能，因为发生page fault时，是需要等待的，而且IO通常来说都是比较慢的，容易成为性能瓶颈。
+
+什么是oom, 为什么会发生OOM？
+前面讲到了shrink working set，是指系统在内存调度时，使用的一种手段，尽可能的让系统能使用有限的内存资源，支撑更多的并发任务。
+oom是指系统已经没有足够的内存给进程使用，即能free的都已经free了，能swap out的也已经swap out了，再也不能挤出物理内存的情况。
+如果遇到这种情况就会发生OOM，表示系统内存以及不足，Linux会挑选并KILL一些进程，来释放内存。
+
+
