@@ -3,6 +3,7 @@ RAG--Retrieval Augmented Generation 检索增强生成
 Question-->Index-->Retrieval-->Generation-->Answer
 
 模型确实会将数据转换为向量，然后在向量数据库中进行检索。完整的 RAG 模型工作流程包括以下几个关键步骤：
+
 1）检索（Retrieval）
 数据嵌入（Embedding）：首先，将大量的背景知识或文档数据通过一个嵌入模型（通常是 Transformer 编码器）转换为向量表示。这些向量表示可以捕捉数据的语义信息。
 向量存储：将这些向量存储到向量数据库（如 FAISS、Milvus 等）中，以便后续的高效检索。
