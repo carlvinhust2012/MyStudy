@@ -1,0 +1,242 @@
+POCO C++ 是一个开源的 C++ 库集合，用于开发网络应用程序、分布式系统和嵌入式系统。
+它提供了丰富的功能，包括网络编程、线程管理、文件系统操作、数据库访问、JSON 和 XML 处理等。
+POCO C++ 的目标是提供一个跨平台的、高性能的、易于使用的工具集，帮助开发者快速构建复杂的系统。
+
+Poco Application 
+参考： https://docs.pocoproject.org/current/Poco.Util.Application.html
+
+Poco Application的run方法如何运行？
+基本的功能:
+提供了一个 int run(int argc, char** argv); 方法用于执行app。
+run 方法会调用 类的 void initialize(Application& self) 、int main(const std::vector& args) 与 void uninitialize()方法。
+run() 函数调用的开始，main 函数是多态的。
+initialize() 和 uninitialize() 是覆盖，而且必须指定调用基类的方法,用于初始化，或者析构子系统的资源。
+也就是说我们自己的类的initialize() 需要调用基类的　initialize() ，uninitialize() 需要调用基类的　uninitialize()
+app程序的初始化部分放到重载后的 initilize() 方法执行。
+app 退出的释放部分放到 uninitialize()。
+程序的功能部门包含到重载的 main()方法中执行。
+
+// demo 程序
+#include "Poco/Poco.h"
+#include "Poco/Util/Application.h"
+#include "Poco/Util/Option.h"
+#include "Poco/Util/OptionSet.h"
+#include <iostream>
+
+using namespace Poco;
+
+class MyApplication : public Util::Application
+{
+public:
+    MyApplication() {}
+    void initialize(Application& self);
+    void uninitialize( );
+    int main(const std::vector<std::string>& args);
+};
+
+void MyApplication::initialize( Application& self )
+{
+    // 帮我们初始化子系统，必须显示的调用
+    Util::Application::initialize( self );
+    std::cout << "this is initialize\n";
+}
+
+void MyApplication::uninitialize( )
+{
+    // 帮我们关闭子系统，必须显示的调用
+    Util::Application::uninitialize( );
+    std::cout << "this is uninitialize\n";
+}
+
+int MyApplication::main(const std::vector<std::string>& args)
+{
+    std::cout << "this is main\n";
+    return Application::EXIT_OK;
+}
+
+/**********************************主函数****************************************/
+int main( int argc , char **argv )
+{
+    MyApplication app;
+    app.run( );
+}
+
+
+/**************************************************************************
+执行结果:
+this is initialize
+this is main
+this is uninitialize
+
+总结:
+从结果可以看出来run() 调用顺序是 initialize() -> main() -> uninitialize()。
+**************************************************************************/
+
+
+Poco Application 如何增加命令行参数？
+
+Application 提供了一个defineOptions(OptionSet & option ) 的方法；一个派生类想要支持命令行参数必须重载此方法，并且调用基类的此方法。
+参数 OptionSet 只是Option 类的一个 vector；Poco::Util::Option 这个类帮助我们在启动应用程序的时候添加一些启动参数，而 OptionSet 是存放了多个Option 的一个 vector。具体的细节直接查看头文件Option.h 或者参考 Poco::Util::ServerApplication 框架的实现。
+
+// demo 
+#include "Poco/Poco.h"
+#include "Poco/Util/Application.h"
+#include "Poco/Util/Option.h"
+#include "Poco/Util/OptionSet.h"
+#include "Poco/Util/HelpFormatter.h"
+#include <iostream>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <stdio.h>
+
+
+using namespace Poco;
+
+class MyApplication : public Util::Application
+{
+public:
+    MyApplication() 
+    {
+        m_helpRequested =  false ;
+    }
+    void initialize(Application& self);
+    void uninitialize();
+    int main(const std::vector<std::string>& args);
+
+    void defineOptions( Util::OptionSet& options);
+    void handleHelp(const std::string& name, const std::string& value );
+    void handleDaemon(const std::string& name, const std::string& value);
+
+private:
+    // 如果传参数进来那么此变量变为 true 在main() 方法就不要做其他的事情直接退出
+    bool m_helpRequested;
+    void beDaemon( );
+};
+
+void MyApplication::initialize(Application& self)
+{
+    // 帮我们初始化子系统，必须显示的调用。
+    Util::Application::initialize( self );
+    std::cout << "this is initialize\n";
+}
+
+void MyApplication::uninitialize( )
+{
+    // 帮我们关闭子系统，必须显示的调用。
+    Util::Application::uninitialize( );
+    std::cout << "this is uninitialize\n";
+}
+
+void MyApplication::defineOptions( Util::OptionSet& options)
+{
+    // 必须调用
+    Util::Application::defineOptions( options );
+    std::cout << "defineOptions被调用" << std::endl;
+    options.addOption(
+            Util::Option("help", "h",
+                    "display help information on command line arguments")
+                    .required(false)
+                    .repeatable(false)
+                    .callback(Util::OptionCallback < MyApplication >(this, &MyApplication::handleHelp))  );
+    options.addOption(
+            Util::Option("daemon", "", "Run application as a daemon.")
+                .required(false)
+                .repeatable(false)
+                .callback(Util::OptionCallback<MyApplication>(this, &MyApplication::handleDaemon))  );
+}
+
+void MyApplication::handleHelp(const std::string& name, const std::string& value )
+{
+    m_helpRequested = true;
+    Poco::Util::HelpFormatter helpFormatter( options() );
+    helpFormatter.format(std::cout);
+}
+
+
+void MyApplication::handleDaemon(const std::string& name, const std::string& value)
+{
+    beDaemon();
+}
+
+void MyApplication::beDaemon()
+{
+    pid_t pid;
+    if ((pid = fork()) < 0)
+        throw SystemException("cannot fork daemon process");
+    else if (pid != 0)
+        exit(0);
+
+    setsid();
+    umask(0);
+
+    FILE* fin  = freopen("/dev/null", "r+", stdin);
+    if (!fin) throw Poco::OpenFileException("Cannot attach stdin to /dev/null");
+    FILE* fout = freopen("/dev/null", "r+", stdout);
+    if (!fout) throw Poco::OpenFileException("Cannot attach stdout to /dev/null");
+    FILE* ferr = freopen("/dev/null", "r+", stderr);
+    if (!ferr) throw Poco::OpenFileException("Cannot attach stderr to /dev/null");
+}
+
+
+int MyApplication::main(const std::vector<std::string>& args)
+{
+    if( !m_helpRequested )
+    {
+        std::cout << "this is main no help\n";
+        while(1)
+        {
+            std::cout << "hello world" << std::endl;
+            sleep( 3 );
+        }
+    }else
+    {
+        std::cout <<"this is main call help\n";
+    }
+    return Application::EXIT_OK;
+}
+
+///////////////////////////////////主函数////////////////////////////////////
+int main( int argc , char **argv )
+{
+    try
+    {
+        MyApplication app;
+        // 在这里传主函数参数
+        app.init( argc, argv );
+        app.run( );
+    } catch( Poco::Exception &e )
+    {
+        std::cerr << "some error:  " << e.what() << std::endl;
+    }
+}
+
+
+执行结果:
+直接执行没有参数 ./a.out
+结果:
+defineOptions被调用
+this is initialize
+this is main no help
+hello world
+
+带参数执行,打印help 信息。　./PocoOption -h
+结果:
+defineOptions被调用
+usage:
+-h, –help display help information on command line arguments
+–daemon Run application as a daemon.
+this is initialize
+this is main call help
+this is uninitialize
+
+带参数执行,到后台　./PocoOption –daemon
+结果:
+defineOptions被调用
+ps aux | grep Poco
+进程已经到后台成为守护进程。
+root+ 6442 0.0 0.0 30468 1032 ? Ss 17:19 0:00 ./PocoOption –daemon
+
+总结:
+很明显　Application 会调用 defineOptions() 方法。
+在执行的时候记加入参数,那么我们就　Application 会帮我们调用　defineOptions( Util::OptionSet& options)
+添加指令的时候注册的对应函数。
