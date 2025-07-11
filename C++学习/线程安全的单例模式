@@ -1,3 +1,85 @@
+C++版本：
+
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+// C++11标准中的std::call_once和std::once_flag来确保单例对象的线程安全初始化
+class Singleton {
+private:
+    // 私有化构造函数，防止外部直接构造对象
+    Singleton() {
+        std::cout << "Singleton created!" << std::endl;
+    }
+
+    // 删除拷贝构造函数和赋值运算符，防止拷贝和赋值
+    Singleton(const Singleton&) = delete;
+    Singleton& operator=(const Singleton&) = delete;
+
+    // 静态指针用于存储单例对象
+    static Singleton* instance;
+
+    // 用于线程安全初始化的标志
+    static std::once_flag onceFlag;
+
+public:
+    // 获取单例对象的静态方法
+    static Singleton* getInstance() {
+        std::call_once(onceFlag, []() {
+            instance = new Singleton();
+        });
+        return instance;
+    }
+
+    // 提供一个示例方法
+    void showMessage() const {
+        std::cout << "Hello from Singleton!" << std::endl;
+    }
+
+    // 提供一个析构函数
+    ~Singleton() {
+        std::cout << "Singleton destroyed!" << std::endl;
+    }
+};
+
+// 初始化静态成员变量
+Singleton* Singleton::instance = nullptr;
+std::once_flag Singleton::onceFlag;
+
+// 测试函数
+void testSingleton() {
+    Singleton* singleton = Singleton::getInstance();
+    singleton->showMessage();
+}
+
+int main() {
+    // 创建多个线程测试线程安全性
+    std::thread t1(testSingleton);
+    std::thread t2(testSingleton);
+    std::thread t3(testSingleton);
+
+    t1.join();
+    t2.join();
+    t3.join();
+
+    // 在程序结束时删除单例对象
+    delete Singleton::getInstance();
+
+    return 0;
+}
+
+/******************************************************************************************/
+程序运行后输出：
+
+Singleton created!
+Hello from Singleton!
+Hello from Singleton!
+Hello from Singleton!
+Singleton destroyed!
+
+/*****************************************************************************************/
+
+
 java版：
 
 // 懒汉模式
@@ -6,7 +88,8 @@ java版：
 // 如果不删除这两个关键字就能保证线程安全，但是每次访问时都要同步，会影响性能，且消耗更多的资源，这是懒汉式单例的缺点。
 public class LazySingleton
 {
-    private static volatile LazySingleton instance = null;    // 保证instance在所有线程中同步
+    // 保证instance在所有线程中同步
+    private static volatile LazySingleton instance = null;
     private LazySingleton(){}    // private避免类在外部被实例化
     public static synchronized LazySingleton getInstance()
     {
@@ -32,6 +115,5 @@ public class HungrySingleton
     }
 }
 
-C++版本：
 
 
