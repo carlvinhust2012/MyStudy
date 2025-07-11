@@ -1,0 +1,66 @@
+
+// ClickHouse/programs/client/clickhouse-client.cpp
+int main(int argc_, char ** argv_) { return mainEntryClickHouseClient(argc_, argv_); }
+
+// ClickHouse/programs/client/Client.cpp
+int mainEntryClickHouseClient(int argc, char ** argv)
+{
+    try
+    {
+        // 这里其实是 namespace DB中定义的实例
+        DB::Client client;
+        client.init(argc, argv);
+        // 这里其实是 namespace DB中定义的实例，执行run方法, Poco::Util::Application::run
+        return client.run();
+    }
+    catch (const DB::Exception & e)
+    {
+        std::cerr << DB::getExceptionMessage(e, false) << std::endl;
+        return 1;
+    }
+    catch (const boost::program_options::error & e)
+    {
+        std::cerr << "Bad arguments: " << e.what() << std::endl;
+        return DB::ErrorCodes::BAD_ARGUMENTS;
+    }
+    catch (...)
+    {
+        std::cerr << DB::getCurrentExceptionMessage(true) << std::endl;
+        return 1;
+    }
+}
+
+
+namespace DB
+{
+
+// 基类 ClientBase
+class Client : public ClientBase 
+{
+public:
+    Client() = default;
+
+    void initialize(Poco::Util::Application & self) override;
+
+    int main(const std::vector<String> & /*args*/) override;
+};
+}
+
+// ClickHouse/src/Client/ClientBase.h
+namespace DB
+{
+
+// ClientBase的基类是 Poco::Util::Application
+class ClientBase : public Poco::Util::Application, public IHints<2, ClientBase>  
+{
+
+public:
+    using Arguments = std::vector<String>;
+
+    ClientBase();
+    ~ClientBase() override;
+
+    void init(int argc, char ** argv);
+};
+}
+
