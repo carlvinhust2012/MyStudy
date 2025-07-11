@@ -1,3 +1,4 @@
+Poco ，全名 Poco C++ Libraries，是 POrtable COmponents 的缩写
 POCO C++ 是一个开源的 C++ 库集合，用于开发网络应用程序、分布式系统和嵌入式系统。
 它提供了丰富的功能，包括网络编程、线程管理、文件系统操作、数据库访问、JSON 和 XML 处理等。
 POCO C++ 的目标是提供一个跨平台的、高性能的、易于使用的工具集，帮助开发者快速构建复杂的系统。
@@ -8,6 +9,41 @@ Poco Application
 参考： https://docs.pocoproject.org/current/Poco.Util.Application.html
 
 Poco Application的run方法如何运行？
+源码：poco/Util/src/Application.cpp
+
+namespace Poco {
+namespace Util {
+.......
+int Application::run()
+{
+	int rc = EXIT_CONFIG;
+
+	try
+	{
+        // 需要派生类重写，实例调用的是派生类的initialize、main、uninitialize接口
+		initialize(*this);  
+		rc = EXIT_SOFTWARE;
+		rc = main(_unprocessedArgs);
+	}
+	catch (Poco::Exception& exc)
+	{
+		logger().log(exc);
+	}
+	catch (std::exception& exc)
+	{
+		logger().error(exc.what());
+	}
+	catch (...)
+	{
+		logger().fatal("system exception"s);
+	}
+
+	uninitialize();
+	return rc;
+}
+}
+}
+
 基本的功能:
 提供了一个 int run(int argc, char** argv); 方法用于执行app。
 run 方法会调用 类的 void initialize(Application& self) 、int main(const std::vector& args) 与 void uninitialize()方法。
