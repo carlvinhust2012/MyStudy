@@ -41,6 +41,7 @@ int Application::run()
 	uninitialize();
 	return rc;
 }
+.......
 }
 }
 

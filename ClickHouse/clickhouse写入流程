@@ -1,0 +1,199 @@
+ClickHouse 是一个高性能的列式存储数据库，其数据存储方式是基于列式存储的，数据被压缩并以高效的方式写入磁盘。为了回答“ClickHouse 是如何把数据存到磁盘的”，我们需要从以下几个方面分析其存储机制，并结合源码进行说明：
+
+1. **列式存储的基本原理**
+2. **数据写入流程**
+3. **数据分区与文件结构**
+4. **压缩与存储格式**
+5. **源码分析**
+
+以下是详细说明，包含源码的参考和解析。由于 ClickHouse 的源码较为复杂，我会尽量引用关键代码片段并解释其逻辑，同时避免过多的代码堆砌。
+
+---
+
+### 1. 列式存储的基本原理
+
+ClickHouse 采用列式存储，与传统的行式存储不同，列式存储将每一列的数据单独存储在磁盘上。这种方式适合分析型查询，因为它可以减少不必要的数据读取，并提高压缩效率。
+
+- **存储单元**：每一列的数据被存储为独立的文件，称为“列文件”（如 `.bin` 文件）。元数据、索引等信息存储在其他文件中（如 `.mrk`、`.idx` 等）。
+- **数据分片**：数据被分成多个“数据片”（data parts），每个数据片对应一个时间分区或插入批次。
+- **压缩**：ClickHouse 使用多种压缩算法（如 LZ4、ZSTD）对列数据进行压缩，以减少磁盘占用并提升读取性能。
+
+---
+
+### 2. 数据写入流程
+
+ClickHouse 的数据写入流程主要包括以下步骤：
+
+1. **接收插入请求**：客户端通过 `INSERT` 语句发送数据，ClickHouse 将数据写入内存中的临时缓冲区。
+2. **内存表（MemTable）**：数据首先存储在内存中的 `IMergeTreeDataPart` 结构中，等待积累到一定量（由配置控制，如 `max_insert_block_size`）。
+3. **刷盘**：当内存中的数据达到阈值或触发刷盘条件时，数据会被写入磁盘，形成一个新的数据片（data part）。
+4. **合并（Merge）**：后台线程会定期对数据片进行合并（merge），以优化存储结构和查询性能。
+5. **元数据管理**：每个数据片的元数据（如列名、数据量等）存储在 `checksums.txt` 和 `columns.txt` 文件中。
+
+---
+
+### 3. 数据分区与文件结构
+
+ClickHouse 的数据按分区存储，每个分区对应一个目录，目录名通常基于分区键（如日期）。一个典型的数据片目录结构如下：
+
+```
+/var/lib/clickhouse/store/xxx/xxx/table_name/partition_key/data_part/
+├── checksums.txt         # 校验和文件，记录每个文件的校验信息
+├── columns.txt           # 列定义文件，记录列名和类型
+├── primary.idx           # 主键索引文件
+├── [column].bin          # 列数据文件（压缩后的二进制数据）
+├── [column].mrk          # 标记文件，记录数据块的偏移量
+├── count.txt             # 记录数据片中的行数
+```
+
+- **分区目录**：分区目录基于分区键生成，例如按 `toYYYYMM(date)` 分区，目录名可能是 `202507`。
+- **数据片（data part）**：每个数据片是一个独立的存储单元，包含一组列文件和元数据文件。数据片名通常为 `all_1_1_0`（格式为 `all_min_max_revision`）。
+- **列文件**：每个列的压缩数据存储在 `[column].bin` 文件中，标记文件 `[column].mrk` 记录数据块的偏移量，便于快速定位。
+
+---
+
+### 4. 压缩与存储格式
+
+ClickHouse 对列数据进行高效压缩，常用的压缩算法包括：
+
+- **LZ4**：默认压缩算法，速度快，适合实时插入。
+- **ZSTD**：压缩比更高，适合存储大量历史数据。
+- **其他算法**：如 Delta 编码、DoubleDelta 编码等，针对特定数据类型（如时间戳、整数）优化。
+
+数据写入时，ClickHouse 会将数据分块（block），每个块独立压缩。压缩后的数据存储在 `.bin` 文件中，标记文件 `.mrk` 记录每个压缩块的偏移量和大小。
+
+---
+
+### 5. 源码分析
+
+下面通过分析 ClickHouse 的源码，说明数据写入磁盘的核心逻辑。源码基于 ClickHouse 的 GitHub 仓库（截至 2025 年 7 月的最新版本，假设基于 v24.x 或 v25.x）。以下是关键代码片段和解释。
+
+#### a. 数据写入的核心类：`MergeTreeData`
+
+`MergeTreeData` 是 ClickHouse 中处理数据存储的核心类，位于 `src/Storages/MergeTree/MergeTreeData.h`。它负责管理数据片、写入磁盘和合并操作。
+
+```cpp
+class MergeTreeData : public IStorage
+{
+public:
+    // 写入数据片到磁盘
+    void write(const Block & block, const String & part_name, const DiskPtr & disk);
+    // 管理数据片
+    MergeTreeDataPartPtr createPart(const String & name, const DiskPtr & disk) const;
+};
+```
+
+- **作用**：`MergeTreeData` 管理数据片的创建和写入。`write` 方法将内存中的数据块（`Block`）序列化为列文件并写入磁盘。
+
+#### b. 数据片的写入：`MergeTreeDataPartWriter`
+
+数据写入的具体逻辑由 `MergeTreeDataPartWriter`（位于 `src/Storages/MergeTree/MergeTreeDataPartWriterWide.cpp`）实现。以下是简化后的代码片段：
+
+```cpp
+void MergeTreeDataPartWriterWide::write(const Block & block, const IColumn::Permutation * permutation)
+{
+    // 遍历每一列
+    for (size_t i = 0; i < block.columns(); ++i)
+    {
+        const auto & column = block.getByPosition(i).column;
+        // 序列化并压缩列数据
+        writeColumn(*column, column->getName());
+    }
+    // 写入标记文件
+    writeMarks();
+    // 写入校验和
+    writeChecksums();
+}
+```
+
+- **writeColumn**：将每一列的数据序列化为二进制格式，并使用指定的压缩算法（如 LZ4）进行压缩，写入 `.bin` 文件。
+- **writeMarks**：生成 `.mrk` 文件，记录每个压缩块的偏移量和大小。
+- **writeChecksums**：更新 `checksums.txt`，记录所有文件的校验和，确保数据完整性。
+
+#### c. 压缩逻辑：`CompressedWriteBuffer`
+
+ClickHouse 使用 `CompressedWriteBuffer`（位于 `src/IO/CompressedWriteBuffer.h`）来实现数据压缩。以下是核心代码：
+
+```cpp
+class CompressedWriteBuffer : public WriteBuffer
+{
+public:
+    CompressedWriteBuffer(WriteBuffer & out_, CompressionCodecPtr codec_)
+        : WriteBuffer(out_.position(), out_.buffer().end() - out_.position()), out(out_), codec(codec_)
+    {
+    }
+
+    void nextImpl() override
+    {
+        // 压缩数据
+        size_t compressed_size = codec->compress(working_buffer.begin(), working_buffer.size(), compressed_buffer.data());
+        // 写入压缩后的数据
+        out.write(compressed_buffer.data(), compressed_size);
+    }
+
+private:
+    WriteBuffer & out;
+    CompressionCodecPtr codec;
+    std::vector<char> compressed_buffer;
+};
+```
+
+- **CompressionCodecPtr**：指向具体的压缩算法实现（如 LZ4 或 ZSTD）。
+- **nextImpl**：将内存中的数据块压缩后写入底层的磁盘文件。
+
+#### d. 数据片目录的创建
+
+数据片目录的创建由 `MergeTreeDataPart` 类管理（位于 `src/Storages/MergeTree/MergeTreeDataPart.cpp`）。以下是相关逻辑：
+
+```cpp
+void MergeTreeDataPart::makeDirectory()
+{
+    // 创建数据片目录
+    fs::create_directories(disk->getPath() + "/" + relative_path);
+    // 初始化元数据文件
+    writeColumnsFile();
+    writeChecksumsFile();
+}
+```
+
+- **makeDirectory**：在磁盘上创建数据片目录，如 `/var/lib/clickhouse/store/.../all_1_1_0/`。
+- **writeColumnsFile**：生成 `columns.txt`，记录列的定义。
+- **writeChecksumsFile**：生成 `checksums.txt`，记录校验和。
+
+#### e. 合并过程（Merge）
+
+ClickHouse 的后台合并线程会定期优化数据片，合并多个小数据片为一个更大的数据片，以减少文件数量并提高查询性能。合并逻辑由 `MergeTreeDataMergerMutator`（位于 `src/Storages/MergeTree/MergeTreeDataMergerMutator.cpp`）实现：
+
+```cpp
+MergeTreeDataMergerMutator::mergePartsToOne(...)
+{
+    // 选择需要合并的数据片
+    auto parts = selectPartsToMerge(...);
+    // 合并列数据
+    for (const auto & part : parts)
+    {
+        mergeColumns(part);
+    }
+    // 生成新的数据片
+    auto new_part = createMergedPart();
+    // 更新元数据
+    writeMergedPart(new_part);
+}
+```
+
+- **mergeColumns**：将多个数据片的列文件合并为一个新的列文件。
+- **writeMergedPart**：将合并后的数据写入新的数据片目录。
+
+---
+
+### 6. 总结
+
+ClickHouse 的数据存储流程可以概括为：
+
+1. **写入内存**：插入的数据首先存储在内存中的 `Block` 结构中。
+2. **序列化与压缩**：数据按列序列化，使用 LZ4 或 ZSTD 压缩，写入 `.bin` 文件。
+3. **生成元数据**：同时生成 `.mrk`、`.idx`、 `checksums.txt` 等文件，记录数据块偏移量、索引和校验信息。
+4. **分区与数据片**：数据按分区键存储在独立的数据片目录中。
+5. **后台合并**：通过合并操作优化存储结构，减少碎片化。
+
+通过分析源码，我们可以看到 `MergeTreeData`、`MergeTreeDataPartWriterWide` 和 `CompressedWriteBuffer` 是数据写入磁盘的核心组件。这些模块协作完成数据的序列化、压缩和存储，确保高效的写入性能和数据一致性。
