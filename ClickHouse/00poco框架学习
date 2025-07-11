@@ -2,6 +2,8 @@ POCO C++ 是一个开源的 C++ 库集合，用于开发网络应用程序、分
 它提供了丰富的功能，包括网络编程、线程管理、文件系统操作、数据库访问、JSON 和 XML 处理等。
 POCO C++ 的目标是提供一个跨平台的、高性能的、易于使用的工具集，帮助开发者快速构建复杂的系统。
 
+github链接：https://github.com/pocoproject/poco
+
 Poco Application 
 参考： https://docs.pocoproject.org/current/Poco.Util.Application.html
 
