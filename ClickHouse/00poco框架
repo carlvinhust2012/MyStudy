@@ -1,0 +1,73 @@
+POCO C++ 是一个开源的 C++ 库集合，用于开发网络应用程序、分布式系统和嵌入式系统。
+它提供了丰富的功能，包括网络编程、线程管理、文件系统操作、数据库访问、JSON 和 XML 处理等。
+POCO C++ 的目标是提供一个跨平台的、高性能的、易于使用的工具集，帮助开发者快速构建复杂的系统。
+
+Poco Application 
+参考： https://docs.pocoproject.org/current/Poco.Util.Application.html
+
+
+基本的功能:
+提供了一个 int run(int argc, char** argv); 方法用于执行app。
+run 方法会调用 类的 void initialize(Application& self) 、int main(const std::vector& args) 与 void uninitialize()方法。
+run() 函数调用的开始，main 函数是多态的。
+initialize() 和 uninitialize() 是覆盖，而且必须指定调用基类的方法,用于初始化，或者析构子系统的资源。
+也就是说我们自己的类的initialize() 需要调用基类的　initialize() ，uninitialize() 需要调用基类的　uninitialize()
+app程序的初始化部分放到重载后的 initilize() 方法执行。
+app 退出的释放部分放到 uninitialize()。
+程序的功能部门包含到重载的 main()方法中执行。
+
+// demo 程序
+#include "Poco/Poco.h"
+#include "Poco/Util/Application.h"
+#include "Poco/Util/Option.h"
+#include "Poco/Util/OptionSet.h"
+#include <iostream>
+
+using namespace Poco;
+
+class MyApplication : public Util::Application
+{
+public:
+    MyApplication() {}
+    void initialize(Application& self);
+    void uninitialize( );
+    int main(const std::vector<std::string>& args);
+};
+
+void MyApplication::initialize( Application& self )
+{
+    // 帮我们初始化子系统，必须显示的调用
+    Util::Application::initialize( self );
+    std::cout << "this is initialize\n";
+}
+
+void MyApplication::uninitialize( )
+{
+    // 帮我们关闭子系统，必须显示的调用
+    Util::Application::uninitialize( );
+    std::cout << "this is uninitialize\n";
+}
+
+int MyApplication::main(const std::vector<std::string>& args)
+{
+    std::cout << "this is main\n";
+    return Application::EXIT_OK;
+}
+
+/**********************************主函数****************************************/
+int main( int argc , char **argv )
+{
+    MyApplication app;
+    app.run( );
+}
+
+
+/**************************************************************************
+执行结果:
+this is initialize
+this is main
+this is uninitialize
+
+总结:
+从结果可以看出来run() 调用顺序是 initialize() -> main() -> uninitialize()。
+**************************************************************************/
