@@ -30,6 +30,13 @@ int mainEntryClickHouseClient(int argc, char ** argv)
     }
 }
 
+client::init() {
+
+}
+
+client::run() {
+
+}
 
 namespace DB
 {

@@ -1,0 +1,104 @@
+clickhouse Server也是遵循 Poco::Util::Application那一套框架，需要重写initialize、main、uninitialize方法。
+
+
+int mainEntryClickHouseServer(int argc, char ** argv)
+{
+    DB::Server app;
+    try
+    {
+        return app.run(argc, argv); // Server::run
+    }
+    catch (...)
+    {
+        std::cerr << DB::getCurrentExceptionMessage(true) << "\n";
+        auto code = DB::getCurrentExceptionCode();
+        return code ? code : 1;
+    }
+}
+
+int Server::run() 
+{
+    return Application::run(); // NOLINT
+}
+
+int Application::run() 
+{
+    Server::initialize();
+    Server::main();
+    Server::uninitialize();
+    return 0;
+}
+
+void Server::initialize(Poco::Util::Application & self)
+{
+    BaseDaemon::initialize(self);
+    logger().information("starting up");
+
+    LOG_INFO(&logger(), "OS name: {}, version: {}, architecture: {}",
+        Poco::Environment::osName(),
+        Poco::Environment::osVersion(),
+        Poco::Environment::osArchitecture());
+}
+
+int Server::main(const std::vector<std::string> & /*args*/)
+{
+    registerFunctions();
+    registerAggregateFunctions();
+    registerTableFunctions();
+    registerStorages();
+    registerDictionaries();
+    registerDisks();
+    registerFormats();
+    registerRemoteFileMetadatas();
+
+    try
+    {
+        auto & database_catalog = DatabaseCatalog::instance();
+        /// We load temporary database first, because projections need it.
+        database_catalog.initializeAndLoadTemporaryDatabase();
+        loadMetadataSystem(global_context);
+        /// After attaching system databases we can initialize system log.
+        global_context->initializeSystemLogs();
+        global_context->setSystemZooKeeperLogAfterInitializationIfNeeded();
+        /// After the system database is created, attach virtual system tables (in addition to query_log and part_log)
+        attachSystemTablesServer(global_context, *database_catalog.getSystemDatabase(), has_zookeeper);
+        attachInformationSchema(global_context, *database_catalog.getDatabase(DatabaseCatalog::INFORMATION_SCHEMA));
+        attachInformationSchema(global_context, *database_catalog.getDatabase(DatabaseCatalog::INFORMATION_SCHEMA_UPPERCASE));
+        /// Firstly remove partially dropped databases, to avoid race with MaterializedMySQLSyncThread,
+        /// that may execute DROP before loadMarkedAsDroppedTables() in background,
+        /// and so loadMarkedAsDroppedTables() will find it and try to add, and UUID will overlap.
+        database_catalog.loadMarkedAsDroppedTables();
+        /// Then, load remaining databases
+        loadMetadata(global_context, default_database);
+        startupSystemTables();
+        database_catalog.loadDatabases();
+        /// After loading validate that default database exists
+        database_catalog.assertDatabaseExists(default_database);
+    }
+    catch (...)
+    {
+        tryLogCurrentException(log, "Caught exception while loading metadata");
+        throw;
+    }
+    LOG_DEBUG(log, "Loaded metadata.");
+
+    
+    {
+        attachSystemTablesAsync(global_context, *DatabaseCatalog::instance().getSystemDatabase(), async_metrics);
+
+        {
+            std::lock_guard lock(servers_lock);
+            createServers(config(), listen_hosts, listen_try, server_pool, async_metrics, servers);
+            if (servers.empty())
+                throw Exception(
+                    "No servers started (add valid listen_host and 'tcp_port' or 'http_port' to configuration file.)",
+                    ErrorCodes::NO_ELEMENTS_IN_CONFIG);
+        }
+    }
+}
+
+void Server::uninitialize()
+{
+    logger().information("shutting down");
+    BaseDaemon::uninitialize();
+}
