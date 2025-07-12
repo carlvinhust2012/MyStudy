@@ -30,12 +30,78 @@ int mainEntryClickHouseClient(int argc, char ** argv)
     }
 }
 
-client::init() {
+void ClientBase::init(int argc, char ** argv)
+{
+    /// Don't parse options with Poco library, we prefer neat boost::program_options.
+    stopOptionsProcessing();
+    readArguments(argc, argv, common_arguments, external_tables_arguments, hosts_and_ports_arguments);
 
+    addOptions(options_description);
+    parseAndCheckOptions(options_description, options, common_arguments);
+    
+    processOptions(options_description, options, external_tables_arguments, hosts_and_ports_arguments);
+    argsToConfig(common_arguments, config(), 100);
+    clearPasswordFromCommandLine(argc, argv);
+}
+
+client::init() {
+    return ClientBase::init();
 }
 
 client::run() {
+    return Poco::Util::Application:run();
+}
 
+void Client::initialize(Poco::Util::Application & self)
+{
+    Poco::Util::Application::initialize(self);
+
+    const char * home_path_cstr = getenv("HOME");
+    if (home_path_cstr)
+        home_path = home_path_cstr;
+
+    configReadClient(config(), home_path);
+    // ........
+}
+
+int Client::main(const std::vector<std::string> & /*args*/)
+try
+{
+    UseSSL use_ssl;
+    MainThreadStatus::getInstance();
+    setupSignalHandler();
+
+    std::cout << std::fixed << std::setprecision(3);
+    std::cerr << std::fixed << std::setprecision(3);
+
+    registerFormats();
+    registerFunctions();
+    registerAggregateFunctions();
+
+    processConfig();
+    
+    /// Includes delayed_interactive.
+    if (is_interactive)
+    {
+        clearTerminal();
+        showClientVersion();
+    }
+
+    connect();
+
+    if (is_interactive && !delayed_interactive)
+    {
+        runInteractive();
+    }
+    else
+    {
+        connection->setDefaultDatabase(connection_parameters.default_database);
+
+        runNonInteractive();
+    }
+
+        if (delayed_interactive)
+            runInteractive();
 }
 
 namespace DB

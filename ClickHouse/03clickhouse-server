@@ -1,5 +1,4 @@
-clickhouse Server也是遵循 Poco::Util::Application那一套框架，需要重写initialize、main、uninitialize方法。
-
+// clickhouse Server也是遵循 Poco::Util::Application那一套框架，需要重写initialize、main、uninitialize方法
 
 int mainEntryClickHouseServer(int argc, char ** argv)
 {
@@ -51,6 +50,7 @@ int Server::main(const std::vector<std::string> & /*args*/)
     registerFormats();
     registerRemoteFileMetadatas();
 
+    // 初始化元数据：日志、系统表、信息视图？
     try
     {
         auto & database_catalog = DatabaseCatalog::instance();
@@ -88,6 +88,7 @@ int Server::main(const std::vector<std::string> & /*args*/)
 
         {
             std::lock_guard lock(servers_lock);
+            // 这里创建server实例
             createServers(config(), listen_hosts, listen_try, server_pool, async_metrics, servers);
             if (servers.empty())
                 throw Exception(
