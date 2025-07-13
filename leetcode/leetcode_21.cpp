@@ -1,4 +1,5 @@
-第一种解法
+// Merge Two Sorted Lists
+// 第一种解法
 #include <iostream>
 
 // Definition for singly-linked list.
@@ -50,12 +51,12 @@ int main() {
     return 1;
 }
 
-[Running] cd "d:\CodeTrainning\leetcode\.vscode\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\CodeTrainning\leetcode\.vscode\"tempCodeRunnerFile
-1 1 2 3 3 4 
-[Done] exited with code=1 in 0.997 seconds
+// [Running] cd "d:\CodeTrainning\leetcode\.vscode\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\CodeTrainning\leetcode\.vscode\"tempCodeRunnerFile
+// 1 1 2 3 3 4 
+// [Done] exited with code=1 in 0.997 seconds
 
 
-第二种解法：
+// 第二种解法：
 #include <iostream>
 
 // Definition for singly-linked list.
@@ -110,14 +111,14 @@ int main() {
     return 1;
 }
 
-[Running] cd "d:\CodeTrainning\leetcode\.vscode\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\CodeTrainning\leetcode\.vscode\"tempCodeRunnerFile
-1 1
-cur->val:-1 
-1 3
-cur->val:1 
-5 3
-cur->val:1 
-5 4
-cur->val:3 
-1 1 3 4 5 
-[Done] exited with code=1 in 1.02 seconds
+// [Running] cd "d:\CodeTrainning\leetcode\.vscode\" && g++ tempCodeRunnerFile.cc -o tempCodeRunnerFile && "d:\CodeTrainning\leetcode\.vscode\"tempCodeRunnerFile
+// 1 1
+// cur->val:-1 
+// 1 3
+// cur->val:1 
+// 5 3
+// cur->val:1 
+// 5 4
+// cur->val:3 
+// 1 1 3 4 5 
+// [Done] exited with code=1 in 1.02 seconds
