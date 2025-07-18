@@ -1,0 +1,8 @@
+remote: Support for password authentication was removed on August 13, 2021.
+remote: Please see https://docs.github.com/get-started/getting-started-with-git/about-remote-repositories#cloning-with-https-urls About remote repositories - GitHub Docs About remote repositories - GitHub Docs   for information on currently recommended modes of authentication.
+致命错误：'https://github.com/hugowork/MyStudy.git/ GitHub - hugowork/MyStudy GitHub - hugowork/MyStudy  ' 鉴权失败
+
+remote: Support for password authentication was removed on August 13, 2021.
+...
+致命错误：... 鉴权失败
+
