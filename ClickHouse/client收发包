@@ -15,7 +15,7 @@ void PacketReceiver::Task::run(AsyncCallback async_callback, SuspendCallback sus
 }
 }
 
-
+// client 处理连接
 void Connection::sendQuery(
     const ConnectionTimeouts & timeouts,
     const String & query,
