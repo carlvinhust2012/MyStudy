@@ -1,0 +1,44 @@
+
+namespace DB
+{
+
+// client 处理收包的接口
+void PacketReceiver::Task::run(AsyncCallback async_callback, SuspendCallback suspend_callback)
+{
+    while (true)
+    {
+        {
+            AsyncCallbackSetter async_setter(receiver.connection, async_callback);
+            receiver.packet = receiver.connection->receivePacket();
+        }
+        suspend_callback();
+    }
+}
+}
+
+
+void Connection::sendQuery(
+    const ConnectionTimeouts & timeouts,
+    const String & query,
+    const NameToNameMap & query_parameters,
+    const String & query_id_,
+    UInt64 stage,
+    const Settings * settings,
+    const ClientInfo * client_info,
+    bool with_pending_data,
+    const std::vector<String> & external_roles,
+    std::function<void(const Progress &)>)
+{
+    /// Send empty block which means end of data.
+    if (!with_pending_data)
+    {
+        sendData(Block(), "", false);
+        out->next();
+    }
+}
+
+void Connection::sendQueryPlan(const QueryPlan & query_plan)
+{
+    writeVarUInt(Protocol::Client::QueryPlan, *out);
+    query_plan.serialize(*out, server_query_plan_serialization_version);
+}
