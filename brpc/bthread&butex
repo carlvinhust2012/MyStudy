@@ -4,6 +4,9 @@
 首先看下butex中使用到的FastPthreadMutex，FastPthreadMutex是基于futex实现的pthread粒度的锁，
 当竞争不激烈时，lock和unlock操作都是通过修改一个用户态的atomic来实现，只有当竞争激烈的时候才会陷入内核进行挂起和wake。
 不过互斥锁也是这么实现的，不是太理解重新实现一个的目的…
+
+如果开启了BTHREAD_USE_FAST_PTHREAD_MUTEX宏定义，使用的是FastPthreadMutex，否则使用pthread_mutex_t。
+首先看下lock方法
 bool FastPthreadMutex::try_lock() {
     auto split = (bthread::MutexInternal*)&_futex;
     bool lock = !split->locked.exchange(1, butil::memory_order_acquire);
@@ -23,5 +26,48 @@ void FastPthreadMutex::lock() {
     (void)lock_contended(NULL);
 }
 
-如果开启了BTHREAD_USE_FAST_PTHREAD_MUTEX宏定义，使用的是FastPthreadMutex，否则使用pthread_mutex_t。
-首先看下lock方法
+首先尝试修改locked这个atomic，如果发现锁没被占用，那么直接返回，否则调用lock_contended方法。
+注意这里使用了memory_order_acquire的memory order，和lock中的release形成syncwith关系，保证了当前线程获得锁之后能看到上个线程在释放锁之前对内存的修改。
+int FastPthreadMutex::lock_contended(const struct timespec* abstime) {
+    int64_t abstime_us = 0;
+    if (NULL != abstime) {
+        abstime_us = butil::timespec_to_microseconds(*abstime);
+    }
+    auto whole = (butil::atomic<unsigned>*)&_futex;
+    while (whole->exchange(BTHREAD_MUTEX_CONTENDED) & BTHREAD_MUTEX_LOCKED) {
+        timespec* ptimeout = NULL;
+        timespec timeout{};
+        if (NULL != abstime) {
+            timeout = butil::microseconds_to_timespec(
+                abstime_us - butil::gettimeofday_us());
+            ptimeout = &timeout;
+        }
+        if (NULL == abstime  || abstime_us > MIN_SLEEP_US) {
+            if (futex_wait_private(whole, BTHREAD_MUTEX_CONTENDED, ptimeout) < 0
+                && errno != EWOULDBLOCK && errno != EINTR/*note*/) {
+                // A mutex lock should ignore interruptions in general since
+                // user code is unlikely to check the return value.
+                return errno;
+            }
+        } else {
+            errno = ETIMEDOUT;
+            return errno;
+        }
+    }
+    PTHREAD_MUTEX_SET_OWNER(_owner);
+    ADD_TLS_PTHREAD_LOCK_COUNT;
+    return 0;
+}
+
+当发现当前锁被占用时，通过系统调用futex_wait_private将当前线程挂起到whole这个atomic对应的队列中。
+void FastPthreadMutex::unlock() {
+    SUB_TLS_PTHREAD_LOCK_COUNT;
+    MUTEX_RESET_OWNER_COMMON(_owner);
+    auto whole = (butil::atomic<unsigned>*)&_futex;
+    const unsigned prev = whole->exchange(0, butil::memory_order_release);
+    // CAUTION: the mutex may be destroyed, check comments before butex_create
+    if (prev != BTHREAD_MUTEX_LOCKED) {
+        futex_wake_private(whole, 1);
+    }
+}
+
