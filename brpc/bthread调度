@@ -1,0 +1,12 @@
+全局单例task_control可以有多个task_group，每个task_group内有两个执行队列_rq和_remote_rq，执行队列中存放着待执行的bthread。
+每个TaskGroup对应一个pthread，初始化函数如下，创建rq和remote_rq，创建main_stack和main_tid；main_tid代表主流程，后面会具体讲main_stack和main_tid的作用。
+                                    task_control
+                                        |
+                                        |
+                    TaskGroup ------TaskGroup------TaskGroup
+                        |               |             |
+                      main_tid        main_tid      main_tid
+                      _rq              _rq          _rq
+                      _remote_rq      _remote_rq    _remote_rq
+
+    
