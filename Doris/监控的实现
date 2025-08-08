@@ -17,3 +17,28 @@ public:
 private:
     MetricRegistry* _metric_registry;
 };
+
+
+class DorisMetrics {
+public:
+    IntCounter* fragment_requests_total;
+    IntCounter* fragment_request_duration_us;
+    IntCounter* http_requests_total;
+    IntCounter* http_request_send_bytes;
+    IntCounter* query_scan_bytes;
+    IntCounter* query_scan_rows;
+........
+    // 单例模式
+    static DorisMetrics* instance() {
+        static DorisMetrics instance;
+        return &instance;
+    }
+private:
+    static const std::string _s_registry_name;
+    static const std::string _s_hook_name;
+
+    MetricRegistry _metric_registry;
+
+    std::unique_ptr<SystemMetrics> _system_metrics;
+    std::shared_ptr<MetricEntity> _server_metric_entity;
+};
