@@ -5,3 +5,15 @@ Status HttpService::start() {
         _ev_http_server->register_handler(HttpMethod::GET, "/metrics", action);
     }
 }
+
+// 本质上是一个http服务？
+class MetricsAction : public HttpHandler {
+public:
+    MetricsAction(MetricRegistry* metric_registry) : _metric_registry(metric_registry) {}
+    virtual ~MetricsAction() {}
+
+    void handle(HttpRequest* req) override;
+
+private:
+    MetricRegistry* _metric_registry;
+};
