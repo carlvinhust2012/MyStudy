@@ -1,3 +1,7 @@
+M:N用户级线程，即N个pthread系统线程去调度执行M个协程（M远远大于N），一个pthread有其私有的任务队列，队列中存储等待执行的若干协程。
+一个pthread执行完任务队列中的所有协程后，也可以去其他pthread的任务队列中拿协程任务，即work-steal。
+如果一个协程正在执行较为耗时的操作，pthread和cpu会被它占用，那么同一任务队列中还没有被执行的协程，有机会被调度到其他pthread上去执行，从而实现了全局的最大并发，充分利用多核。
+
 全局单例task_control可以有多个task_group，每个task_group内有两个执行队列_rq和_remote_rq，执行队列中存放着待执行的bthread。
 每个TaskGroup对应一个pthread，初始化函数如下，创建rq和remote_rq，创建main_stack和main_tid；main_tid代表主流程，后面会具体讲main_stack和main_tid的作用。
                                     task_control
@@ -9,4 +13,91 @@
                       _rq              _rq          _rq
                       _remote_rq      _remote_rq    _remote_rq
 
-    
+
+
+// bthread.cpp 协程启动
+int bthread_start_urgent(bthread_t* __restrict tid,
+                         const bthread_attr_t* __restrict attr,
+                         void * (*fn)(void*),
+                         void* __restrict arg) {
+  bthread::TaskGroup* g = bthread::tls_task_group;
+  if (g) {
+    // start from worker
+    return bthread::TaskGroup::start_foreground(&g, tid, attr, fn, arg);
+  }
+  // 首次执行，需要初始化
+  return bthread::start_from_non_worker(tid, attr, fn, arg);
+}
+
+
+// 每个TaskGroup对应多个TaskMeta,每个TaskMeta会创建对应的bid，
+// 然后调用ready_to_run存储push到_rq队列中，并调用signal_task通知正在wait_task的worker，最终调用sched_to
+void TaskGroup::run_main_task() {
+    TaskGroup* dummy = this;
+    bthread_t tid;
+    // 获取任务
+    while (wait_task(&tid)) {
+        // 获取到tid后，执行调度
+        TaskGroup::sched_to(&dummy, tid);
+        DCHECK_EQ(this, dummy);
+        DCHECK_EQ(_cur_meta->stack, _main_stack);
+        if (_cur_meta->tid != _main_tid) {
+            TaskGroup::task_runner(1/*skip remained*/);
+        }
+    }
+    // Don't forget to add elapse of last wait_task.
+    current_task()->stat.cputime_ns += butil::cpuwide_time_ns() - _last_run_ns;
+}
+
+// wait_task等待获取task，这里addr1和expected初始值都是0，所以这时候，worker是挂起，等待任务到达。
+// 如果获取到信号，就会调用steal_task得到空闲的bid。
+// sched_to会根据获取到的bid进行寄存器，上下文的恢复，之后调用task_runner执行对应的任务。
+// 这里wait_task会阻塞住等待信号到来，所以会随机选一个group，并且调用start_background                     
+bool TaskGroup::wait_task(bthread_t* tid) {
+    do {
+        if (_last_pl_state.stopped()) {
+            return false;
+        }
+        // 初始值都是0，等待任务到来
+        _pl->wait(_last_pl_state);
+        // 窃取任务
+        if (steal_task(tid)) {
+            return true;
+        }
+    } while (true);
+}
+
+bool TaskGroup::steal_task(bthread_t* tid) {
+  // 本地队列中有任务，优先本地
+  if (_remote_rq.pop(tid)) {
+    return true;
+  }
+  #ifndef BTHREAD_DONT_SAVE_PARKING_STATE
+  _last_pl_state = _pl->get_state();
+  #endif  
+  // 全局窃取
+  return _control->steal_task(tid, &_steal_seed, _steal_offset);
+}
+
+
+// steal_task和ready_to_run获取到bid后，get_stack会调用bthread_make_fcontext，会把task_runner存储到寄存器中，最终都会调用sched_to进行调用。
+// sched_to中每个TaskGroup会维护当前的meta，和从队列中获取的bid对应的meta比较。正常都是不一样的，各自有自己的堆栈和寄存器。
+// 调用jump_stack最终会调用task_runner，真正的用户函数的入口函数; 执行完后，再调用_last_context_remained，继续获取队列中的数据。
+inline void TaskGroup::sched_to(TaskGroup** pg, bthread_t next_tid) {
+    // 根据bid获取TM，
+    TaskMeta* next_meta = address_meta(next_tid);
+    // 第一次创建worker，stack才会赋值，其他在一个group里头，创建的bthread，stack都是空的。
+    if (next_meta->stack == NULL) {
+        // 说明这是一个新建的bthread，将函数指针`task_runner`进行存储
+        ContextualStack* stk = get_stack(next_meta->stack_type(), task_runner);
+        if (stk) {
+            // 设置stk
+            next_meta->set_stack(stk);
+        } else {
+            next_meta->attr.stack_type = BTHREAD_STACKTYPE_PTHREAD;
+            next_meta->set_stack((*pg)->_main_stack);
+        }
+    }
+    // Update now_ns only when wait_task did yield.
+    sched_to(pg, next_meta);
+}
