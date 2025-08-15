@@ -1,0 +1,11 @@
+vhost-user 是一种让虚拟机“绕过 QEMU”，直接与高性能用户态进程通信的 virtio 后端协议，广泛用于云计算中的网络与存储加速场景。
+
+通信流程（以网络设备为例）
+1）初始化阶段：
+QEMU 启动虚拟机，作为 Master 通过 Unix socket 连接 vhost-user 后端（如 DPDK）。
+双方协商特性（VHOST_USER_GET_FEATURES）。
+QEMU 将 Guest 的内存布局通过 SET_MEM_TABLE 发送给后端，建立共享内存映射。
+
+2）运行阶段：
+Guest 发包 → 写入 virtqueue → 通过 kickfd 通知后端。
+后端（如 DPDK）从共享内存中取包 → 处理后转发 → 通过 callfd 通知 Guest。
