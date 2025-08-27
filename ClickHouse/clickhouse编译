@@ -1,0 +1,53 @@
+#安装依赖
+sudo apt update
+sudo apt install -y git cmake ninja-build python3 \
+        clang-19 lld-19 llvm-19-dev libclang-19-dev \
+        ccache libicu-dev libreadline-dev libssl-dev \
+        zlib1g-dev liblz4-dev libzstd-dev libdouble-conversion-dev \
+        libpoco-dev libboost-all-dev nasm yasm gawk curl \
+        libcurl4-openssl-dev libbrotli-dev libfarmhash-dev \
+        rapidjson-dev libre2-dev libsnappy-dev libcpuid-dev
+
+#如果发行版仓库没有 Clang-19，用官方脚本：
+sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
+
+#获取源码和子模块
+git clone --recursive https://github.com/ClickHouse/ClickHouse.git
+cd ClickHouse
+git submodule update --init --recursive
+
+#安装rust（可选）
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+rustup default nightly-2024-12-01   # 与官方 CI 保持一致 
+
+#配置编译
+mkdir build && cd build
+export CC=clang-19
+export CXX=clang++-19
+cmake .. \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DENABLE_CLICKHOUSE_ALL=1 \
+  -DUSE_STATIC_LIBRARIES=1 \
+  -DSPLIT_DEBUG_SYMBOLS=1 \
+  -DENABLE_TESTS=OFF \
+  -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+  -GNinja
+
+#执行编译
+ninja -j$(nproc)
+
+# 默认装到 /usr/local
+sudo ninja install
+
+#生成文件
+/usr/local/bin/clickhouse-server
+/usr/local/bin/clickhouse-client
+/usr/local/bin/clickhouse-local
+
+#启动&验证
+# 生成默认配置
+clickhouse-server --config-file /etc/clickhouse-server/config.xml &
+# 连接
+clickhouse-client --query "SELECT version(), uptime()"
