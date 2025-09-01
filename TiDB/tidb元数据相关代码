@@ -1,0 +1,21 @@
+源文件 pkg/meta/meta.go
+
+注释中写元数据的结构，简单明了
+// Meta structure:
+//	NextGlobalID -> int64
+//	SchemaVersion -> int64
+//	DBs -> {
+//		DB:1 -> db meta data []byte
+//		DB:2 -> db meta data []byte
+//	}
+//	DB:1 -> {
+//		Table:1 -> table meta data []byte
+//		Table:2 -> table meta data []byte
+//		TID:1 -> int64
+//		TID:2 -> int64
+//	}
+//
+// DDL version 2
+// Names -> {
+//		Name:DBname\x00tablename -> tableID
+// }
