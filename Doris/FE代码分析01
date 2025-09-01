@@ -1,6 +1,197 @@
-源文件：incubator-doris/fe/fe-core/src/main/java/org/apache/doris/qe/DdlExecutor.java
-这里是DdlExecutor.execute()的具体实现，包含多种操作
 
+
+// 源文件: incubator-doris/fe/fe-core/src/main/java/org/apache/doris/qe/StmtExecutor.java
+// StmtExecutor.execute()的具体实现，包含多种不同的语句
+
+    // Execute one statement with queryId
+    // The queryId will be set in ConnectContext
+    // This queryId will also be sent to master FE for exec master only query.
+    // query id in ConnectContext will be changed when retry exec a query or master FE return a different one.
+    // Exception:
+    // IOException: talk with client failed.
+    public void execute(TUniqueId queryId) throws Exception {
+        context.setStartTime();
+
+        plannerProfile.setQueryBeginTime();
+        context.setStmtId(STMT_ID_GENERATOR.incrementAndGet());
+
+        context.setQueryId(queryId);
+
+        try {
+            if (context.isTxnModel() && !(parsedStmt instanceof InsertStmt)
+                    && !(parsedStmt instanceof TransactionStmt)) {
+                throw new TException("This is in a transaction, only insert, commit, rollback is acceptable.");
+            }
+            // support select hint e.g. select /*+ SET_VAR(query_timeout=1) */ sleep(3);
+            analyzeVariablesInStmt();
+
+            if (!context.isTxnModel()) {
+                // analyze this query
+                analyze(context.getSessionVariable().toThrift());
+                if (isForwardToMaster()) {
+                    if (isProxy) {
+                        // This is already a stmt forwarded from other FE.
+                        // If goes here, which means we can't find a valid Master FE(some error happens).
+                        // To avoid endless forward, throw exception here.
+                        throw new UserException("The statement has been forwarded to master FE("
+                                + Catalog.getCurrentCatalog().getSelfNode().first + ") and failed to execute" +
+                                " because Master FE is not ready. You may need to check FE's status");
+                    }
+                    forwardToMaster();
+                    if (masterOpExecutor != null && masterOpExecutor.getQueryId() != null) {
+                        context.setQueryId(masterOpExecutor.getQueryId());
+                    }
+                    return;
+                } else {
+                    LOG.debug("no need to transfer to Master. stmt: {}", context.getStmtId());
+                }
+            } else {
+                analyzer = new Analyzer(context.getCatalog(), context);
+                parsedStmt.analyze(analyzer);
+            }
+
+            if (parsedStmt instanceof QueryStmt) {
+                context.getState().setIsQuery(true);
+                if (!((QueryStmt) parsedStmt).isExplain()) {
+                    // sql/sqlHash block
+                    try {
+                        Catalog.getCurrentCatalog().getSqlBlockRuleMgr().matchSql(originStmt.originStmt, context.getSqlHash(), context.getQualifiedUser());
+                    } catch (AnalysisException e) {
+                        LOG.warn(e.getMessage());
+                        context.getState().setError(e.getMysqlErrorCode(), e.getMessage());
+                        return;
+                    }
+                    // limitations: partition_num, tablet_num, cardinality
+                    List<ScanNode> scanNodeList = planner.getScanNodes();
+                    for (ScanNode scanNode : scanNodeList) {
+                        if (scanNode instanceof OlapScanNode) {
+                            OlapScanNode olapScanNode = (OlapScanNode) scanNode;
+                            Catalog.getCurrentCatalog().getSqlBlockRuleMgr().checkLimitaions(olapScanNode.getSelectedPartitionNum().longValue(),
+                                    olapScanNode.getSelectedTabletsNum(), olapScanNode.getCardinality(), analyzer.getQualifiedUser());
+                        }
+                    }
+                }
+
+                MetricRepo.COUNTER_QUERY_BEGIN.increase(1L);
+                int retryTime = Config.max_query_retry_time;
+                for (int i = 0; i < retryTime; i++) {
+                    try {
+                        //reset query id for each retry
+                        if (i > 0) {
+                            UUID uuid = UUID.randomUUID();
+                            TUniqueId newQueryId = new TUniqueId(uuid.getMostSignificantBits(), uuid.getLeastSignificantBits());
+                            AuditLog.getQueryAudit().log("Query {} {} times with new query id: {}", DebugUtil.printId(queryId), i, DebugUtil.printId(newQueryId));
+                            context.setQueryId(newQueryId);
+                        }
+                        handleQueryStmt();
+                        // explain query stmt do not have profile
+                        if (!((QueryStmt) parsedStmt).isExplain()) {
+                            writeProfile(true);
+                        }
+                        break;
+                    } catch (RpcException e) {
+                        if (i == retryTime - 1) {
+                            throw e;
+                        }
+                        if (!context.getMysqlChannel().isSend()) {
+                            LOG.warn("retry {} times. stmt: {}", (i + 1), parsedStmt.getOrigStmt().originStmt);
+                        } else {
+                            throw e;
+                        }
+                    } finally {
+                        QeProcessorImpl.INSTANCE.unregisterQuery(context.queryId());
+                    }
+                }
+            } else if (parsedStmt instanceof SetStmt) {
+                handleSetStmt();
+            } else if (parsedStmt instanceof EnterStmt) {
+                handleEnterStmt();
+            } else if (parsedStmt instanceof UseStmt) {
+                handleUseStmt();
+            } else if (parsedStmt instanceof TransactionStmt) {
+                handleTransactionStmt();
+            } else if (parsedStmt instanceof InsertStmt) { // Must ahead of DdlStmt because InserStmt is its subclass
+                try {
+                    handleInsertStmt();
+                    if (!((InsertStmt) parsedStmt).getQueryStmt().isExplain()) {
+                        queryType = "Insert";
+                        writeProfile(true);
+                    }
+                } catch (Throwable t) {
+                    LOG.warn("handle insert stmt fail", t);
+                    // the transaction of this insert may already begun, we will abort it at outer finally block.
+                    throw t;
+                } finally {
+                    QeProcessorImpl.INSTANCE.unregisterQuery(context.queryId());
+                }
+            } else if (parsedStmt instanceof DdlStmt) {
+                handleDdlStmt();
+            } else if (parsedStmt instanceof ShowStmt) {
+                handleShow();
+            } else if (parsedStmt instanceof KillStmt) {
+                handleKill();
+            } else if (parsedStmt instanceof ExportStmt) {
+                handleExportStmt();
+            } else if (parsedStmt instanceof UnlockTablesStmt) {
+                handleUnlockTablesStmt();
+            } else if (parsedStmt instanceof LockTablesStmt) {
+                handleLockTablesStmt();
+            } else if (parsedStmt instanceof UnsupportedStmt) {
+                handleUnsupportedStmt();
+            } else {
+                context.getState().setError(ErrorCode.ERR_NOT_SUPPORTED_YET, "Do not support this query.");
+            }
+        } catch (IOException e) {
+            LOG.warn("execute IOException. {}", context.getQueryIdentifier(), e);
+            // the exception happens when interact with client
+            // this exception shows the connection is gone
+            context.getState().setError(ErrorCode.ERR_UNKNOWN_ERROR, e.getMessage());
+            throw e;
+        } catch (UserException e) {
+            // analysis exception only print message, not print the stack
+            LOG.warn("execute Exception. {}, {}", context.getQueryIdentifier(), e.getMessage());
+            context.getState().setError(e.getMysqlErrorCode(), e.getMessage());
+            context.getState().setErrType(QueryState.ErrType.ANALYSIS_ERR);
+        } catch (Exception e) {
+            LOG.warn("execute Exception. {}", context.getQueryIdentifier(), e);
+            context.getState().setError(ErrorCode.ERR_UNKNOWN_ERROR,
+                    e.getClass().getSimpleName() + ", msg: " + e.getMessage());
+            if (parsedStmt instanceof KillStmt) {
+                // ignore kill stmt execute err(not monitor it)
+                context.getState().setErrType(QueryState.ErrType.ANALYSIS_ERR);
+            }
+        } finally {
+            // revert Session Value
+            try {
+                SessionVariable sessionVariable = context.getSessionVariable();
+                VariableMgr.revertSessionValue(sessionVariable);
+                // origin value init
+                sessionVariable.setIsSingleSetVar(false);
+                sessionVariable.clearSessionOriginValue();
+            } catch (DdlException e) {
+                LOG.warn("failed to revert Session value. {}", context.getQueryIdentifier(), e);
+                context.getState().setError(e.getMysqlErrorCode(), e.getMessage());
+            }
+            if (!context.isTxnModel() && parsedStmt instanceof InsertStmt) {
+                InsertStmt insertStmt = (InsertStmt) parsedStmt;
+                // The transaction of an insert operation begin at analyze phase.
+                // So we should abort the transaction at this finally block if it encounters exception.
+                if (insertStmt.isTransactionBegin() && context.getState().getStateType() == MysqlStateType.ERR) {
+                    try {
+                        String errMsg = Strings.emptyToNull(context.getState().getErrorMessage());
+                        Catalog.getCurrentGlobalTransactionMgr().abortTransaction(
+                                insertStmt.getDbObj().getId(), insertStmt.getTransactionId(),
+                                (errMsg == null ? "unknown reason" : errMsg));
+                    } catch (Exception abortTxnException) {
+                        LOG.warn("errors when abort txn. {}", context.getQueryIdentifier(), abortTxnException);
+                    }
+                }
+            }
+        }
+    }
+
+// 源文件：incubator-doris/fe/fe-core/src/main/java/org/apache/doris/qe/DdlExecutor.java
+// DdlExecutor.execute()的具体实现，包含多种操作
 public class DdlExecutor {
     public static void execute(Catalog catalog, DdlStmt ddlStmt) throws Exception {
         if (ddlStmt instanceof CreateClusterStmt) {
