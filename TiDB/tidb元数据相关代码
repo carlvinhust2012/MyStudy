@@ -19,3 +19,23 @@
 // Names -> {
 //		Name:DBname\x00tablename -> tableID
 // }
+
+
+// CreateDatabase creates a database with db info.
+func (m *Mutator) CreateDatabase(dbInfo *model.DBInfo) error {
+	dbKey := m.dbKey(dbInfo.ID)
+
+	if err := m.checkDBNotExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(dbInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := m.txn.HSet(mDBs, dbKey, data); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
