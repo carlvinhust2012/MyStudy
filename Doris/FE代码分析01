@@ -1,3 +1,70 @@
+// 源文件：incubator-doris/fe/fe-core/src/main/java/org/apache/doris/PaloFe.java
+public class PaloFe {
+    public static void main(String[] args) {
+        start(DORIS_HOME_DIR, PID_DIR, args);
+    }
+
+    // entrance for doris frontend
+    public static void start(String dorisHomeDir, String pidDir, String[] args) {
+        try {
+            // init config
+            Config config = new Config();
+            config.init(dorisHomeDir + "/conf/fe.conf");
+            // Must init custom config after init config, separately.
+            // Because the path of custom config file is defined in fe.conf
+            config.initCustom(Config.custom_config_dir + "/fe_custom.conf");
+
+            // init catalog and wait it be ready
+            Catalog.getCurrentCatalog().initialize(args);
+            Catalog.getCurrentCatalog().waitForReady();
+
+            // init and start:
+            // 1. HttpServer for HTTP Server
+            // 2. FeServer for Thrift Server
+            // 3. QeService for MySQL Server
+            QeService qeService = new QeService(Config.query_port, Config.mysql_service_nio_enabled, ExecuteEnv.getInstance().getScheduler());
+            FeServer feServer = new FeServer(Config.rpc_port);
+
+            feServer.start();
+
+            qeService.start();
+            ThreadPoolManager.registerAllThreadPoolMetric();
+           }
+
+    }
+};
+
+// 源文件: incubator-doris/fe/fe-core/src/main/java/org/apache/doris/qe/QeService.java
+// QeService的各个功能接口实现
+/**
+ * This is the encapsulation of the entire front-end service,
+ * including the creation of services that support the MySQL protocol
+ */
+public class QeService {
+    public QeService(int port, boolean nioEnabled, ConnectScheduler scheduler) {
+        // Set up help module
+        try {
+            HelpModule.getInstance().setUpModule();
+        } catch (Exception e) {
+            LOG.error("Help module failed, because:", e);
+        }
+        this.port = port;
+        if (nioEnabled) {
+            mysqlServer = new NMysqlServer(port, scheduler);
+        } else {
+            mysqlServer = new MysqlServer(port, scheduler);
+        }
+    }
+
+    public void start() throws IOException {
+        if (!mysqlServer.start()) {
+            LOG.error("mysql server start failed");
+            System.exit(-1);
+        }
+        LOG.info("QE service start.");
+    }
+};
+
 // 源文件：incubator-doris/fe/fe-core/src/main/java/org/apache/doris/qe/ConnectProcessor.java
 // ConnectProcessor各个功能接口实现
 /**
