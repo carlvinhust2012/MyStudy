@@ -1,4 +1,4 @@
-FeServer-->FrontendServiceImpl-->
+FeServer-->FrontendServiceImpl-->masterImpl
 /**
  * Doris frontend thrift server
  */
