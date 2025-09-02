@@ -1,0 +1,17 @@
+// 源文件：incubator-doris/fe/fe-core/src/main/java/org/apache/doris/catalog/Catalog.java
+// FE上最重要的类
+public class Catalog {
+    public void loadImage(String imageDir) throws IOException, DdlException {
+        Storage storage = new Storage(imageDir);
+        clusterId = storage.getClusterID();
+        File curFile = storage.getCurrentImageFile();
+        if (!curFile.exists()) {
+            // image.0 may not exist
+            LOG.info("image does not exist: {}", curFile.getAbsolutePath());
+            return;
+        }
+        replayedJournalId.set(storage.getImageSeq());
+        MetaReader.read(curFile, this);
+    }
+
+};
