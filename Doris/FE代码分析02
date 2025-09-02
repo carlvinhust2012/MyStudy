@@ -1,0 +1,78 @@
+FeServer-->FrontendServiceImpl-->
+/**
+ * Doris frontend thrift server
+ */
+public class FeServer {
+    private int port;
+    private ThriftServer server; // 使用Thrift组件
+
+    public void start() throws IOException {
+        // setup frontend server
+        TProcessor tprocessor = new FrontendService.Processor<FrontendService.Iface>(
+                new FrontendServiceImpl(ExecuteEnv.getInstance()));
+        server = new ThriftServer(port, tprocessor);
+        server.start();
+        LOG.info("thrift server started.");
+    }
+};
+
+// Frontend service used to serve all request for this frontend through
+// thrift protocol
+public class FrontendServiceImpl implements FrontendService.Iface {
+    public FrontendServiceImpl(ExecuteEnv exeEnv) {
+        masterImpl = new MasterImpl();
+        this.exeEnv = exeEnv;
+    }
+};
+
+public class MasterImpl {
+    public MasterImpl() {
+        reportHandler.start();
+    }
+    public TMasterResult finishTask(TFinishTaskRequest request) {
+        try {
+            List<TTabletInfo> finishTabletInfos;
+            switch (taskType) {
+                case CREATE:
+                    Preconditions.checkState(request.isSetReportVersion());
+                    finishCreateReplica(task, request);
+                    break;
+                case PUSH:
+                    checkHasTabletInfo(request);
+                    Preconditions.checkState(request.isSetReportVersion());
+                    finishPush(task, request);
+                    break;
+                case CLONE:
+                    finishClone(task, request);
+                    break;
+                case CHECK_CONSISTENCY:
+                    finishConsistencyCheck(task, request);
+                    break;
+                case MAKE_SNAPSHOT:
+                    finishMakeSnapshot(task, request);
+            }
+    }
+};
+
+// 实现checkpoint
+public class Checkpoint extends MasterDaemon {
+    private Catalog catalog;
+    private String imageDir;
+    private EditLog editLog;
+    public Checkpoint(EditLog editLog) {
+        super("leaderCheckpointer", FeConstants.checkpoint_interval_second * 1000L);
+        this.imageDir = Catalog.getServingCatalog().getImageDir();
+        this.editLog = editLog;
+    }
+    @Override
+    protected void runAfterCatalogReady() {
+        doCheckpoint();
+    }
+};
+
+// 事务实现？
+public class MasterTxnExecutor {
+
+};
+
+};
