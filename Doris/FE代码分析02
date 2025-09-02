@@ -70,9 +70,31 @@ public class Checkpoint extends MasterDaemon {
     }
 };
 
-// 事务实现？
-public class MasterTxnExecutor {
+// VERSION file contains clusterId. eg:
+//      clusterId=123456
+// ROLE file contains FrontendNodeType and NodeName. eg:
+//      role=OBSERVER
+//      name=172.0.0.1_1234_DNwid284dasdwd
+public class Storage {
+    public Storage(String metaDir) throws IOException {
+        this.editsFileSequenceNumbers = new ArrayList<Long>();
+        this.metaDir = metaDir;
 
-};
-
+        reload();
+    }
+    public void reload() throws IOException {
+        // Read version file info
+        Properties prop = new Properties();
+        File versionFile = getVersionFile();
+        if (versionFile.isFile()) {
+            FileInputStream in = new FileInputStream(versionFile);
+            prop.load(in);
+            in.close();
+            clusterID = Integer.parseInt(prop.getProperty(CLUSTER_ID));
+            if (prop.getProperty(TOKEN) != null) {
+                token = prop.getProperty(TOKEN);
+            }
+        }
+    ........
+    }
 };
