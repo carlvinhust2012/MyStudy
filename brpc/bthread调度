@@ -14,6 +14,48 @@ M:N用户级线程，即N个pthread系统线程去调度执行M个协程（M远�
                       _remote_rq      _remote_rq    _remote_rq
 
 
+外部线程 / 当前线程
+        │  bthread_start_background / bthread_start_urgent
+        ▼
+TaskMeta 创建
+        │ push
+        v
+┌───────────┐   steal   ┌───────────┐
+│  本地 rq  │ <-------┐ │ remote_rq │
+└───────────┘         │ └───────────┘
+        │ pop/steal   │
+        ▼
+TaskGroup::sched_to(tid)
+        │ jump_stack(cur, next)
+        ▼
+task_runner() 执行
+        │ remain → user_fn → ending_sched
+        ▼
+回到 ① 继续 pop/steal
+
+
+task入队
+| 触发方            | 入口函数                           | 放入队列              |
+| --------------   | --------------------------------  | --------------------|
+| 外部 pthread      | `bthread::start_from_non_worker`  | **remote\_rq**      |
+| 当前 TaskGroup 内 | `TaskGroup::start_background`     | **本地 rq**          |
+| 高优先级抢占       | `TaskGroup::start_foreground`     | **本地 rq**（立即抢占）|
+
+task出队
+| 步骤          | 关键代码             | 说明                 |
+| ----------   | -----------------   | --------------------|
+| ① pop 本地   | `g->rq.pop(tid)`    | 无锁 LIFO，性能最好    |
+| ② steal 远程 | `g->steal_task()`   | 无锁 FIFO，跨 TG 窃取 |
+| ③ 无任务      | 回到 `main_tid`     | 空转，等待新任务       |
+
+task执行
+| 阶段        | 关键代码                       | 说明                         |
+| ---------- | -----------------------------| ---------------------------- |
+| ① 准备执行  | `TaskGroup::sched_to(tid)`   | `task_meta` → 栈 → jump      |
+| ② 上下文切换 | `jump_stack(cur, next)`     | 用户态 `fcontext` 切换         |
+| ③ 运行函数  | `task_runner()`              | 先 `remain`，后用户 `fn(arg)`  |
+| ④ 时间片到  | `ending_sched()`             | 切换回 `main_tid` 或下一个任务  |
+
 
 // bthread.cpp 协程启动
 int bthread_start_urgent(bthread_t* __restrict tid,
