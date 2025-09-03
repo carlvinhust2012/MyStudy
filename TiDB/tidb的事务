@@ -17,3 +17,36 @@ Client          TiDB-Server          PD             TiKV-Leader
  |                |--------------------------------> WriteCF
  |   OK           |                  |                   |
  |<---------------|                  |                   |
+
+
+1.事务发起：拿到全局时间戳
+客户端 BEGIN（或 BEGIN PESSIMISTIC）。
+TiDB Server 向 PD 申请 单调递增的 TSO，作为本次事务的start_ts（快照时间戳）。
+该事务随后所有 快照读 都只能看到 commit_ts ≤ start_ts 的数据，只能读取事务开始之前的数据。
+
+2.语句执行：写写缓冲 + 锁
+写入
+– 数据先缓存在 TiDB 进程的 MemBuffer；
+– 同时记录本次要修改的 Key 列表。
+读取（快照读）
+– 直接读 TiKV 的最新 已提交 版本（由 MVCC 提供）。
+悲观 vs 乐观
+– 悲观事务（默认）：遇到写写冲突立即 加锁阻塞。
+– 乐观事务：不加物理锁，冲突推迟到 提交阶段 检测
+
+3.事务提交：两阶段提交（2PC）
+TiDB Server 作为 Coordinator，把写集合按 Key 路由到对应的 TiKV Region Leader，执行 2PC：
+任意阶段失败 → Rollback（把意向锁改成回滚标记）。
+所有 Secondary Keys 的锁都指向 Primary Key；通过它做 故障恢复（roll-forward / rollback）
+
+4.回滚与故障恢复
+Coordinator 崩溃：重启后读取 Primary Key 的状态，决定继续 commit 还是 rollback。
+网络分区：靠 Raft 日志保证 已 commit 的数据不会丢；未 commit 的 2PC 事务最终超时回滚。
+
+5.并发控制：MVCC + 快照隔离
+隔离级别：Snapshot Isolation（官方叫 Repeatable Read）。
+实现：
+– 每个 Key 在 RocksDB 里存多版本：
+key@version → value。
+– 读操作根据 start_ts 找到 不大于它的最新已提交版本。
+– 写操作生成新版本，避免 读写互斥，提高并发
