@@ -1,3 +1,4 @@
+参考：https://www.luozhiyun.com/archives/620
 TiDB 事务 = TSO 全局时钟 + 2PC 保证原子性 + MVCC 保证并发隔离 + Raft 保证持久性，
 所有 跨 Region 的写操作 都在 TiDB Server 的协调下完成 分布式原子提交。
 
