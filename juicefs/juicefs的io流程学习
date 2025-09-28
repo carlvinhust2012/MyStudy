@@ -1,0 +1,32 @@
+juicefs是一个基于对象存储底座的文件系统，因其兼具对象存储的低成本和完整posix语义而受众多用户喜爱，同时易于支持完备的客户端缓存，在AI训练场景尤其出众。
+
+写流程
+fileSystem.Write(in fuse.WriteIn, data []byte)
+  -> VFS.Write(Ino(in.NodeId), buf, in.Offset, in.Fh) // Offset是file的offset
+    -> handle.fileWriter.Write(off, buf) // off是file的offset
+      -> fileWriter.writeChunk(indx, off, data) // indx表示chunk在file中的编号, off表示chunk中的offset
+          -> chunkWriter.findWritableSlice(off) // off表示chunk中的offset, 为支持合并写, 将chunk分成若干slice, 每个slice都有一个sliceWriter, 每个chunkWriter都有一个commitThread负责后台flush
+                sliceWriter.write(off, data) // off表示slice中的offset
+                  -> wSlice.WriteAt(p, off) //  将数据写到内存buffer, off表示slice中的offset
+
+commitThread // loop扫描每个slice
+  -> sliceWriter.flushData() // 每个slice被freeze后就起一个异步flush线程, 待flush done
+    -> sliceWriter.chunkWriter.Finish(length) // length是该slice中冻结的数据长度
+      -> wSlice.FlushTo(offset) // flush offset前未upload的数据, 其中, offset是flush的截止偏移
+        ->wSlice.upload(index) // index是block在slice中的编号
+       chunkWriter.fileWriter.dataWriter.Meta.Write(inode, indx, off, slice) // slice数据flush done之后, 将slice的元数据append到chunk.slices后面, 这里index是file中的chunk编号, off是chunk中的offset
+
+读流程
+fileSystem.Read(in fuse.ReadIn, buf []byte)
+  -> VFS.Read(Ino(in.NodeId), buf, in.Offset, in.Fh) // 读取文件指定偏移, 这里Offset是file的offset
+    -> handle.fileReader.Read(off, buf) // 读取文件对象指定偏移, 这里off是file的offset
+      -> fileReader.splitRange(block) // 这里block表示文件的一个区间, 为支持slice读合并, 将block分成若干slice,
+          fileReader.prepareRequests(ranges) // 每个slice有一个sliceReader负责读数据, 这里起异步sliceReader
+          fileReader.waitForIO(reqs, buf) // 这里req.frange.off是req.sliceReader这个slice中的offset, 这里调用后等待数据ready被唤醒
+
+sliceReader.Run()
+  -> sliceReader.fileReader.dataReader.Meta.Read(inode, index, &slices) // sliceReader读取chunk对应的slice列表, 这里index是file中的chunk编号
+     sliceReader.fileReader.dataReader.Read(page, slices, offset) // sliceReader读取数据, 这里offset是chunk中的offset
+       ->dataReader.readSlice(s *meta.Slice, page *chunk.Page, off int) // 这里off是Slice中的有效offset
+         ->rSlice.ReadAt(p Page, off int) // 这里rSlice指特定meta.Slice的读取实体, off是meta.Slice中的offset, p是数据存放地址
+     sliceReader.Done() // 数据ready, 唤醒主线程
