@@ -1,6 +1,6 @@
 初步的理解，kvcache相当于一个分布式内存池
 2025 年主流路线有两条，都直接把 KVCache 做成「分布式内存池」：
-1）云厂商托管版（阿里云 Tair KVCache、火山引擎 EIC）
+1）云厂商托管版（阿里云 Tair KVCache、火山引擎 EIC），参考：https://www.modb.pro/db/1943491310539780096
 已商用，显存-内存-SSD 三级池化，单卡可 offload 百 GB 级 KVCache，TTFT 缩短 90%，Batch 规模提升 5-10 倍 。
 2）开源社区版（Mooncake + SGLang/MemServe）
 2025-07 代码合入主干，用 RDMA/GPUDirect 把集群空闲 GPU 显存+CPU 内存拼成统一池，支持 PD 分离、多副本、哈希去重，单机 10 分钟能搭，多机可水平扩展到 TB 级 。
