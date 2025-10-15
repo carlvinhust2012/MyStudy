@@ -25,4 +25,3 @@ Mooncake/MemServe 把 KV-Block 切成 512 KB–1 MB 的 chunk，预取 + 双缓�
 一次跨机读 64–128 MB，有效带宽 90 % 以上；平均到每个 token 只增加 0.02–0.04 ms。
 3）PD 分离架构
 prefill 节点本来就要算完才送 decode 节点，1 µs 网络延迟 ≪ 几十 ms 计算延迟，对首 token 时间几乎没影响
-
