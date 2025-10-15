@@ -1,0 +1,45 @@
+KV Cache 的工作原理
+KV Cache（Key-Value Cache）是 Transformer 模型（尤其是解码器部分，如 GPT 等自回归模型）中用于优化推理效率的关键技术。
+它主要解决自回归生成过程中重复计算的问题：在生成序列时，注意力机制需要计算 Query (Q)、Key (K) 和 Value (V) 矩阵，但对于之前已生成的 token，只需缓存并复用其 K 和 V，而非每次从头计算，从而大幅降低计算量和时间。
+
+基本工作流程
+KV Cache 的工作分为两个主要阶段：Prefill（预填充） 和 Decode（解码）。
+
+Prefill 阶段：
+输入提示（prompt）中的所有 token 一次性处理。
+对于每个注意力头，计算所有 token 的 Q、K、V 矩阵。
+将计算出的 K 和 V 矩阵缓存起来（形状通常为 [batch_size, num_heads, seq_len, head_dim]）。
+这个阶段的计算复杂度是 O(n²)，其中 n 是提示长度，但只执行一次。
+
+Decode 阶段（生成新 token 时）：
+
+对于每个新生成的 token，只计算当前 token 的 Q、K、V。
+从缓存中取出之前的 K 和 V，拼接当前 token 的 K 和 V，形成更长的缓存（长度增加 1）。
+使用当前 Q 与扩展后的 K 计算注意力分数（QK^T），然后与 V 相乘得到输出。
+更新缓存：将新 K 和 V 追加到缓存中。
+重复此过程，直到生成结束。每个步骤的计算复杂度降为 O(n)，n 是当前序列长度。
+
+这种机制避免了从头重新计算整个序列的 K 和 V，显著加速生成速度，尤其在长序列时。 
+不过，它会增加内存消耗，因为缓存会随序列增长而膨胀（KV Cache 占用内存是主要瓶颈之一）。
+
+# Prefill: 计算并缓存初始 K, V
+K_cache = compute_keys(prompt_tokens)
+V_cache = compute_values(prompt_tokens)
+
+# Decode: 生成新 token
+for _ in range(max_new_tokens):
+    Q = compute_query(current_token)
+    # 拼接缓存
+    K_full = concat(K_cache, compute_key(current_token))
+    V_full = concat(V_cache, compute_value(current_token))
+    # 计算注意力
+    attn_scores = matmul(Q, K_full.T) / sqrt(d_k)
+    attn_weights = softmax(attn_scores + mask)
+    output = matmul(attn_weights, V_full)
+    # 更新缓存
+    K_cache = K_full
+    V_cache = V_full
+    current_token = sample(output)
+
+图片：https://miro.medium.com/0*oYTK9K1diMxApp6t
+
