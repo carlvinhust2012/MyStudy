@@ -1,0 +1,8 @@
+Core Architecture: The Transformer
+Modern LLMs are predominantly based on the Transformer architecture, introduced in the 2017 paper "Attention Is All You Need." 
+Unlike earlier recurrent neural networks (RNNs), Transformers use a mechanism called self-attention to weigh the importance of different words in a sentence relative to each other,
+allowing parallel processing and handling long-range dependencies efficiently.
+  
+LLMs like GPT are typically decoder-only Transformers (focusing on generation), while others like T5 use full encoder-decoder setups (for tasks like translation). 
+Here's a high-level breakdown of key components
+
