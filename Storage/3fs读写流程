@@ -76,8 +76,58 @@ node_list = skiplist[hash_key]  // 0 RTT
 pick = node_list[0]             // 优先本地/同机架
 RDMA_READ(chunk_handle, pick)
 
+为什么 chunk_id = offset >> 26 ？
+64 MiB = 2^26 B ⇒ 用 offset >> 26 就能 零开销地 算出“从文件头开始第几个 64 MiB 块”，比除法快、且编译器常量折叠后只剩一条移位指令
 
-Client(lib3fs)  mgmtd(master)  metad(any)  storaged-0  storaged-1  storaged-2
+
+3FS 自己不“建表”，而是把 所有元数据映射成 FoundationDB 里的 KV 对；
+整个命名空间只用 两类前缀（\x01 dentry、\x02 inode）就搞定 POSIX 语义，没有独立的“表”概念，但可按 key 前缀 把逻辑视图看成 4 张表。
+下面给出 key 拼写规则 + value 内容 + 典型长度，一眼就能对照源码
+| # | 前缀     | 逻辑表名     | key 拼装格式（二进制）                   | 说明                                     |
+| - | ------ | ------------ | ------------------------------------- | --------------------------------------  |
+| 1 | `\x01` | dentry       | `\x01{parent_inode BE32}{name UTF-8}` | 目录项 → inode 映射                       |
+| 2 | `\x02` | inode\_attr  | `\x02{inode BE32}attr`                | 标准属性（size/mode/uid/gid/mtime/ctime） |
+| 3 | `\x02` | inode\_xattr | `\x02{inode BE32}x{name}`             | 扩展属性（selinux/capability…）           |
+| 4 | `\x02` | inode\_chunk | `\x02{inode BE32}c{chunk_id BE64}`    | chunk→storaged 列表（仅大文件）            |
+
+一、key 拼装规则（二进制）
+| 步骤 | 目录层级     | 实际 FDB key（hex）           | 说明                        |
+| -- | ------------ | --------------------------- | -------------------------   |
+| 1  | `/`          | `\x02\x00\x00\x00\x01attr`  | 根 inode 固定 = 1            |
+| 2  | `/a`         | `\x01{1BE32}"a"`            | 在根目录下找 dentry "a"       |
+| 3  | `/a/b`       | `\x01{parent_inode}"b"`     | parent\_inode 是上一步读出的值 |
+| 4  | `/a/b/c.txt` | `\x01{parent_inode}"c.txt"` | 最终拿到目标 inode            |
+
+二、解析流程（0 网络跳转，本地 metad 线程）
+client(metad)                                      FoundationDB
+     |                                                    |
+     | 1. 根 inode 缓存命中？                               |
+     |---- 有 → 直接拿 inode=1                              |
+     |---- 无 → Get('\x02\x00\x00\x00\x01attr') → 8 B 包体 |
+     |                                                    |
+     | 2. 读 /a 的 dentry                                  |
+     |    Get('\x01\x00\x00\x00\x01"a"') → value=12 B     |
+     |    12 B 里前 4 B 就是 inode_A                       |
+     |                                                    |
+     | 3. 读 /a/b 的 dentry                                |
+     |    Get('\x01{inode_A}"b"') → inode_B               |
+     |                                                    |
+     | 4. 读 /a/b/c.txt 的 dentry                          |
+     |    Get('\x01{inode_B}"c.txt"') → inode_C           |
+     |                                                    |
+     | 5. 读 inode_C 的 attr                               |
+     |    Get('\x02{inode_C}attr') → 31 B 属性             |
+     |                                                    |
+     | 6. 返回 {inode_C, attr} 给客户端                     |
+
+三、性能关键点
+1）每级目录一次点查（FoundationDB 单 key 读 < 0.2 ms）。
+2）同目录下有 100 万 dentry 也不影响：只读 一个 key，不是范围扫。
+3）解析结果在 metad 线程本地 LRU 缓存 30 s，热路径 0 RTT。
+4）深度 = 5 时，总读延迟 ≈ 5 × 0.2 ms = 1 ms；后续读写直接用 inode，不再碰路径。
+
+
+Client(lib3fs)  mgmtd(master)      metad(any)  storaged-0  storaged-1  storaged-2
          |              |              |            |            |            |
          | 1. write()/fwrite()         |            |            |            |
          |---------------------------->|            |            |            |
