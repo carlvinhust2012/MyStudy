@@ -69,6 +69,13 @@ storaged_endpoint = node_id_to_rdma_addr(node_id)
 chunk_handle = {inode, chunk_id}
 客户端直接 RDMA_WRITE(buf, endpoint, chunk_handle)。
 
+读流程同理
+chunk_id = offset >> 26
+hash_key = xxhash(inode, chunk_id, seed)
+node_list = skiplist[hash_key]  // 0 RTT
+pick = node_list[0]             // 优先本地/同机架
+RDMA_READ(chunk_handle, pick)
+
 
 Client(lib3fs)  mgmtd(master)  metad(any)  storaged-0  storaged-1  storaged-2
          |              |              |            |            |            |
