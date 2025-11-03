@@ -164,3 +164,54 @@ Client(lib3fs)  mgmtd(master)      metad(any)  storaged-0  storaged-1  storaged-
 7）后续 读请求 同样通过一致性哈希定位到 storaged-0。
 8）若数据仍在 内存 PageCache（3FS 默认 1 GB 热区），直接 零拷贝 RDMA 返回。
 9）Client 把数据拷到用户缓冲区，read() 返回，一次读写闭环完成。
+
+3fs是以chunk为单位往storage写文件的，后端也是按chunk为单位存储的吗？
+是的——3FS 的“存储层”完全按 chunk 为最小物理单元 来落地文件数据，与前端切块粒度 1:1 对齐；
+storaged 进程眼里只有 chunk，没有“文件”概念，文件到 chunk 的映射只在 元数据 KV 里保存。
+
+一、写路径：client 按 chunk 切，storaged 按 chunk 收
+client(lib3fs)                          storaged-0 (primary)
+     |                                        |
+     | 1. write(buf, 100 MiB)                 |
+     |---- 拆成 chunk0..chunk1 (64 MiB+36 MiB) |
+     |                                        |
+     | 2. RDMA_WRITE(chunk0, 64 MiB)          |
+     |--------------------------------------->|
+     |   chunk_handle = {inode, chunk_id=0}   |
+     |                                        |
+     | 3. RDMA_WRITE(chunk1, 36 MiB)          |
+     |--------------------------------------->|
+     |   chunk_handle = {inode, chunk_id=1}   |
+
+二、落盘：storaged 目录结构
+/mnt/3fs-data/
+   └── volume-0/
+       ├── chunk/
+       │   ├── 102/          # inode 102
+       │   │   ├── 0.bin     # 64 MiB
+       │   │   └── 1.bin     # 36 MiB
+       │   └── 103/
+       │       └── 0.bin
+       └── wal/...
+一个 chunk 一个独立文件，文件名就是 {chunk_id}.bin
+顺序写 + fallocate 预分配，保证 大块连续磁盘空间
+chunk 大小固定 64 MiB（可配置），最后一块允许短写
+
+三、读路径：同样按 chunk 定位
+ client                                  storaged-1 (副本)
+     |                                        |
+     | 1. read(offset=70 MiB, len=10 MiB)     |
+     |---- 算 chunk_id = 70 MiB >> 26 = 1     |
+     |                                        |
+     | 2. RDMA_READ({inode, chunk_id=1})      |
+     |--------------------------------------->|
+     |   只读 10 MiB，zero-copy 返回            |
+
+四、后台任务视角
+| 任务           | 操作粒度  | 说明                                                |
+| -----------   | -------- | ----------------------------------------           |
+| **CRAQ 复制**  | chunk    | 主副本按 chunk 把 `.bin` 文件链式推给备节点            |
+| **重建/再平衡** | chunk    | 节点下线时，CRAQ 选新后继，只搬受影响 chunk             |
+| **CRC 校验**   | chunk    | 每 chunk 末尾 4 B CRC32，独立验证                    |
+| **压缩/归档**   | chunk    | 冷数据层把 `.bin` 压缩成 `.bin.zst`，仍保持 chunk 边界 |
+
