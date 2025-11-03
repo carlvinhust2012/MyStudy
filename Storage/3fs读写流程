@@ -1,4 +1,76 @@
-    Client(lib3fs)  mgmtd(master)  metad(any)  storaged-0  storaged-1  storaged-2
+3FS 的 metad 进程 在收到任何 POSIX 调用（open/unlink/stat...）后的 第一步 就是 把路径名解析成 inode，然后 后续所有内部操作都只用 inode。
+下面给出一次 open("/a/b/c.txt", O_RDONLY) 的完整“路径→inode”时序图
+
+Client(app)        lib3fs/fuse        metad-0        metad-1        FDB KV
+     |                  |               |              |              |
+     | 1. open("/a/b/c.txt", O_RDONLY)  |              |              |
+     |----------------->|               |              |              |
+     |                  | 2. 逐级解析请求                               |
+     |                  |---------------|--------------|              |
+     |                  |               | 3. 查根 inode(固定=1)        |
+     |                  |               |---------------------------->|
+     |                  |               | 4. 读 /a 的 dentry           |
+     |                  |               |<----------------------------|
+     |                  |               | 5. 得到 /a 的 inode=100      |
+     |                  |               | 6. 读 /a/b 的 dentry         |
+     |                  |               |---------------------------->|
+     |                  |               | 7. 得到 /b 的 inode=101      |
+     |                  |               | 8. 读 /a/b/c.txt dentry     |
+     |                  |               |---------------------------->|
+     |                  |               | 9. 得到 c.txt inode=102      |
+     |                  |               | 10. 读 inode-102 属性        |
+     |                  |               |---------------------------->|
+     |                  |               | 11. 返回 inode+attr          |
+     |                  |<--------------|--------------|              |
+     |                  | 12. 缓存在 lib 内存(dentry cache 30 s)        |  
+     |<-----------------|               |              |              |
+
+1）路径解析完全在 metad 内部完成，客户端拿不到中间 inode，只能拿到 最终 inode 与 attr。
+2）解析算法就是 字符串 split('/') + 逐级 FDB GetRange，利用 同一父目录的 dentry key 连续 的特性，一次范围扫描 即可拿到所有子项，O(depth) 次 RPC 即可到底。
+3）解析成功后，lib3fs 会把 “最后一级 dentry → inode” 记入本地 LRU dentry cache（默认 30 s），后续 open/read/write 直接传 inode，不再重复解析。
+4）如果 cache 命中，路径→inode 转换成本 = 0；未命中则再走一次上图流程。
+因此，3FS 确实先把 path/filename 转换成 inode，之后所有内部元数据读写都围绕 inode 展开，路径只在客户端第一次接触文件时有用。
+
+client(lib3fs)              FDB(metad)                        storaged-0        storaged-1
+     |                           |                                 |                |
+     | 1. open/write("/a/b/c", buf, len)                           |                |
+     |---- 本地 dentry 缓存命中，已拿到 inode=102 & attr ---          |                |
+     |                                                             |                |
+     | 2. 计算 chunk_id = offset >> 26 (64 MiB)                     |                |
+     |    hash_key = xxhash(inode, chunk_id, seed)                 |                |
+     |    primary = skiplist[hash_key]  // 0 RTT                   |                |
+     |------------------------------------------------------------>|                |
+     | 3. RDMA_WRITE chunk0 to storaged-0 (主副本)                  |                |
+     |<------------------------------------------------------------|                |
+     | 4. storaged-0 后台链式复制(CRAQ) 给 storaged-1/2              |--------------->|
+     | 5. 多数派落盘后，回 ACK                                       |<---------------|
+     | 6. client 收到 ACK，write() 返回成功                          |                |
+
+一、核心数据结构（attr 里自带“路由种子”）
+| 字段            | 长度 | 说明                     |
+| -------------- | --- | ------------------------ |
+| `chunk_size`   | 4 B | 创建文件时选定，默认 64 MiB |
+| `stripe_width` | 2 B | 副本数，默认 3             |
+| `hash_seed`    | 8 B | 文件级随机种子，防止全局热点 |
+
+二、客户端计算路由（0 RTT）
+1）逻辑 chunk 编号
+chunk_id = offset >> chunk_size_bits
+（即 offset / chunk_size，向下取整）
+2）一致性哈希键
+hash_key = hash(inode, chunk_id, hash_seed)
+采用 xxHash64，确定性 且 均匀。
+3）选主副本节点
+把 hash_key 扔进 跳表（Skiplist）环，环上节点按 node_id 排序；
+顺时针取 前 stripe_width 个 node_id，即为 主→备→备 列表。
+复杂度 O(log N)，纯本地 CPU 计算，0 网络 RTT。
+4）物理地址拼装
+storaged_endpoint = node_id_to_rdma_addr(node_id)
+chunk_handle = {inode, chunk_id}
+客户端直接 RDMA_WRITE(buf, endpoint, chunk_handle)。
+
+
+Client(lib3fs)  mgmtd(master)  metad(any)  storaged-0  storaged-1  storaged-2
          |              |              |            |            |            |
          | 1. write()/fwrite()         |            |            |            |
          |---------------------------->|            |            |            |
