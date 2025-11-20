@@ -30,3 +30,104 @@ sliceReader.Run()
        ->dataReader.readSlice(s *meta.Slice, page *chunk.Page, off int) // 这里off是Slice中的有效offset
          ->rSlice.ReadAt(p Page, off int) // 这里rSlice指特定meta.Slice的读取实体, off是meta.Slice中的offset, p是数据存放地址
      sliceReader.Done() // 数据ready, 唤醒主线程
+
+
+// pkg/fs/fs.go 定义文件接口
+func (f *File) Read(ctx meta.Context, b []byte) (n int, err error) {
+	_, task := trace.NewTask(context.TODO(), "Read")
+	defer task.End()
+	l := vfs.NewLogContext(ctx)
+	defer func() { f.fs.log(l, "Read (%s,%d): (%d,%s)", f.path, len(b), n, errstr(err)) }()
+	f.Lock()
+	defer f.Unlock()
+	n, err = f.pread(ctx, b, f.offset) // 这里调用读接口
+	f.offset += int64(n)
+	return
+}
+
+func (f *File) pread(ctx meta.Context, b []byte, offset int64) (n int, err error) {
+	if offset >= f.info.Size() {
+		return 0, io.EOF
+	}
+	if int64(len(b))+offset > f.info.Size() {
+		b = b[:f.info.Size()-offset]
+	}
+	if f.data != nil {
+		n := copy(b, f.data[offset:])
+		return n, nil
+	}
+	if f.wdata != nil {
+		eno := f.wdata.Flush(ctx)
+		if eno != 0 {
+			err = eno
+			return
+		}
+	}
+	if f.rdata == nil {
+		f.rdata = f.fs.reader.Open(f.inode, uint64(f.info.Size()))
+	}
+
+	got, eno := f.rdata.Read(ctx, uint64(offset), b) // 实际调用vfs.FileReader.Read接口
+	for eno == syscall.EAGAIN {
+		got, eno = f.rdata.Read(ctx, uint64(offset), b)
+	}
+	if eno != 0 {
+		err = eno
+		return
+	}
+	if got == 0 {
+		return 0, io.EOF
+	}
+	f.fs.readSizeHistogram.Observe(float64(got))
+	return got, nil
+}
+
+// pkg/vfs/reader.go
+func (f *fileReader) Read(ctx meta.Context, offset uint64, buf []byte) (int, syscall.Errno) {
+	if f.r.readBufferUsed() > f.r.bufferSize {
+		time.Sleep(time.Millisecond * 10)             // slow down
+		for f.r.readBufferUsed() > f.r.bufferSize*2 { // readahead uses 80% of buffer, stop here to avoid OOM
+			time.Sleep(time.Millisecond * 100)
+		}
+	}
+	f.Lock()
+	defer f.Unlock()
+	f.acquire()
+	defer f.release()
+
+	if f.err != 0 || f.closing {
+		return 0, f.err
+	}
+
+	size := uint64(len(buf))
+	if offset >= f.length || size == 0 {
+		return 0, 0
+	}
+	block := &frange{offset, size}
+	if block.end() > f.length {
+		block.len = f.length - block.off
+	}
+
+	f.cleanupRequests(block)
+	var lastBS uint64 = 32 << 10
+	if block.off+lastBS > f.length {
+		lastblock := frange{f.length - lastBS, lastBS}
+		if f.length < lastBS {
+			lastblock = frange{0, f.length}
+		}
+		f.readAhead(&lastblock)
+	}
+	ranges := f.splitRange(block)
+	reqs := f.prepareRequests(ranges)
+	defer func() {
+		for _, req := range reqs {
+			s := req.s
+			s.refs--
+			if s.refs == 0 && s.state == INVALID {
+				s.delete()
+			}
+		}
+	}()
+	f.checkReadahead(block)
+	return f.waitForIO(ctx, reqs, buf)
+}
