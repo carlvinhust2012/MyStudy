@@ -1,0 +1,141 @@
+
+// incubator-doris/be/src/vec/core/column_with_type_and_name.h
+struct ColumnWithTypeAndName {
+    ColumnPtr column;  // 保存数据的列指针
+    DataTypePtr type;  // 数据类型指针
+    String name;       // 列名称
+
+    ColumnWithTypeAndName() {}
+    ColumnWithTypeAndName(const ColumnPtr& column_, const DataTypePtr& type_, const String& name_)
+            : column(column_), type(type_), name(name_) {}
+
+    /// Uses type->create_column() to create column
+    ColumnWithTypeAndName(const DataTypePtr& type_, const String& name_)
+            : column(type_->create_column()), type(type_), name(name_) {}
+
+    ColumnWithTypeAndName clone_empty() const;
+    bool operator==(const ColumnWithTypeAndName& other) const;
+
+    void dump_structure(std::ostream& out) const;
+    String dump_structure() const;
+    std::string to_string(size_t row_num) const;
+
+    void to_pb_column_meta(PColumnMeta* col_meta) const;
+};
+
+// 定义列的集合
+using ColumnsWithTypeAndName = std::vector<ColumnWithTypeAndName>;
+
+// incubator-doris/be/src/vec/core/block.h
+// block的定义，由列集合构成
+class Block {
+private:
+    using Container = ColumnsWithTypeAndName;
+    using IndexByName = phmap::flat_hash_map<String, size_t>;
+
+    Container data; // 列的集合
+    IndexByName index_by_name; // 列名称，数据大小的map
+};
+
+// BE从FE接收到执行计划，根据执行计划中指定的节点，来做实际的动作
+Status ExecNode::create_node(RuntimeState* state, ObjectPool* pool, const TPlanNode& tnode,
+                             const DescriptorTbl& descs, ExecNode** node) {
+    std::stringstream error_msg;
+
+    if (state->enable_vectorized_exec()) {
+        switch (tnode.node_type) {
+        case TPlanNodeType::OLAP_SCAN_NODE:
+        case TPlanNodeType::ASSERT_NUM_ROWS_NODE:
+        case TPlanNodeType::HASH_JOIN_NODE:
+        case TPlanNodeType::AGGREGATION_NODE:
+        case TPlanNodeType::UNION_NODE:
+        case TPlanNodeType::CROSS_JOIN_NODE:
+        case TPlanNodeType::SORT_NODE:
+        case TPlanNodeType::EXCHANGE_NODE:
+        case TPlanNodeType::ODBC_SCAN_NODE:
+        case TPlanNodeType::MYSQL_SCAN_NODE:
+        case TPlanNodeType::INTERSECT_NODE:
+        case TPlanNodeType::EXCEPT_NODE:
+        case TPlanNodeType::ES_HTTP_SCAN_NODE:
+        case TPlanNodeType::EMPTY_SET_NODE:
+        case TPlanNodeType::SCHEMA_SCAN_NODE:
+        case TPlanNodeType::ANALYTIC_EVAL_NODE:
+        case TPlanNodeType::SELECT_NODE:
+        case TPlanNodeType::REPEAT_NODE:
+}
+
+class ExecNode {
+    TPlanNodeType::type _type;
+    ObjectPool* _pool;
+    std::vector<Expr*> _conjuncts;
+    std::vector<ExprContext*> _conjunct_ctxs;
+    std::vector<TupleId> _tuple_ids;
+    std::unique_ptr<doris::vectorized::VExprContext*> _vconjunct_ctx_ptr;
+
+    std::vector<ExecNode*> _children;
+    RowDescriptor _row_descriptor;
+};
+
+// streamload的代码执行过程
+Status StreamLoadAction::_handle(StreamLoadContext* ctx) {
+    RETURN_IF_ERROR(_exec_env->stream_load_executor()->execute_plan_fragment(ctx));
+
+    if (ctx->two_phase_commit) {
+        int64_t pre_commit_start_time = MonotonicNanos();
+        RETURN_IF_ERROR(_exec_env->stream_load_executor()->pre_commit_txn(ctx)); // 事务开始
+        ctx->pre_commit_txn_cost_nanos = MonotonicNanos() - pre_commit_start_time;
+    } else {
+        // If put file success we need commit this load
+        int64_t commit_and_publish_start_time = MonotonicNanos();
+        RETURN_IF_ERROR(_exec_env->stream_load_executor()->commit_txn(ctx));
+        ctx->commit_and_publish_txn_cost_nanos = MonotonicNanos() - commit_and_publish_start_time;
+    }
+}
+
+Status StreamLoadExecutor::execute_plan_fragment(StreamLoadContext* ctx,
+                                                 std::shared_ptr<StreamLoadPipe> pipe) { 
+    auto st = _exec_env->fragment_mgr()->exec_plan_fragment();
+
+}
+
+Status FragmentMgr::exec_plan_fragment(const TExecPlanFragmentParams& params, FinishCallback cb) {
+    exec_state.reset(new FragmentExecState(fragments_ctx->query_id,
+                                        params.params.fragment_instance_id,
+                                        params.backend_num, _exec_env, fragments_ctx));
+    RETURN_IF_ERROR(exec_state->prepare(params));
+    auto st = _thread_pool->submit_func(
+            std::bind<void>(&FragmentMgr::_exec_actual, this, exec_state, cb));
+}
+
+Status PlanFragmentExecutor::prepare(const TExecPlanFragmentParams& request,
+                                     QueryFragmentsCtx* fragments_ctx) {
+    RETURN_IF_ERROR(ExecNode::create_tree(_runtime_state.get(), obj_pool(), request.fragment.plan,
+                                          *desc_tbl, &_plan));
+    std::vector<ExecNode*> exch_nodes;
+    _plan->collect_nodes(TPlanNodeType::EXCHANGE_NODE, &exch_nodes);
+
+    std::vector<ExecNode*> scan_nodes;
+    std::vector<TScanRangeParams> no_scan_ranges;
+    _plan->collect_scan_nodes(&scan_nodes);
+
+    RETURN_IF_ERROR(DataSink::create_data_sink(
+                obj_pool(), request.fragment.output_sink, request.fragment.output_exprs, params,
+                row_desc(), runtime_state()->enable_vectorized_exec(), &_sink, *desc_tbl));
+    RETURN_IF_ERROR(_sink->prepare(runtime_state()));
+
+    _row_batch.reset(new RowBatch(_plan->row_desc(), _runtime_state->batch_size(),
+                                  _runtime_state->instance_mem_tracker().get()));
+    _block.reset(new doris::vectorized::Block());
+}
+
+Status ExecNode::create_tree(RuntimeState* state, ObjectPool* pool, const TPlan& plan,
+                             const DescriptorTbl& descs, ExecNode** root)
+    RETURN_IF_ERROR(create_tree_helper(state, pool, plan.nodes, descs, nullptr, &node_idx, root));
+}
+
+Status ExecNode::create_tree_helper(RuntimeState* state, ObjectPool* pool,
+                                    const std::vector<TPlanNode>& tnodes,
+                                    const DescriptorTbl& descs, ExecNode* parent, int* node_idx,
+                                    ExecNode** root) {
+    RETURN_IF_ERROR(create_node(state, pool, tnodes[*node_idx], descs, &node));
+}
