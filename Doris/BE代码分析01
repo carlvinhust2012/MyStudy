@@ -29,11 +29,26 @@ int main(int argc, char** argv) {
     doris::HttpService http_service(exec_env, doris::config::webserver_port,
                                     doris::config::webserver_num_workers);
     status = http_service.start();
-    
+
     // 4. heart beat server
     doris::TMasterInfo* master_info = exec_env->master_info();
     doris::ThriftServer* heartbeat_thrift_server;
     doris::AgentStatus heartbeat_status = doris::create_heartbeat_server(
             exec_env, doris::config::heartbeat_service_port, &heartbeat_thrift_server,
             doris::config::heartbeat_service_thread_count, master_info);
+}
+
+// http是be上的其中一种服务，可以处理多种任务
+Status HttpService::start() {
+    add_default_path_handlers(_web_page_handler.get(), _env->process_mem_tracker());
+
+    // register load
+    MiniLoadAction* miniload_action = _pool.add(new MiniLoadAction(_env));
+    _ev_http_server->register_handler(HttpMethod::PUT, "/api/{db}/{table}/_load", miniload_action);
+    StreamLoadAction* streamload_action = _pool.add(new StreamLoadAction(_env));
+    _ev_http_server->register_handler(HttpMethod::PUT, "/api/{db}/{table}/_stream_load",
+                                      streamload_action);
+    StreamLoad2PCAction* streamload_2pc_action = _pool.add(new StreamLoad2PCAction(_env));
+    _ev_http_server->register_handler(HttpMethod::PUT, "/api/{db}/_stream_load_2pc",
+                                      streamload_2pc_action);
 }
