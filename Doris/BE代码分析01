@@ -1,0 +1,38 @@
+
+// incubator-doris/be/src/vec/core/column_with_type_and_name.h
+struct ColumnWithTypeAndName {
+    ColumnPtr column;  // 保存数据的列指针
+    DataTypePtr type;  // 数据类型指针
+    String name;       // 列名称
+
+    ColumnWithTypeAndName() {}
+    ColumnWithTypeAndName(const ColumnPtr& column_, const DataTypePtr& type_, const String& name_)
+            : column(column_), type(type_), name(name_) {}
+
+    /// Uses type->create_column() to create column
+    ColumnWithTypeAndName(const DataTypePtr& type_, const String& name_)
+            : column(type_->create_column()), type(type_), name(name_) {}
+
+    ColumnWithTypeAndName clone_empty() const;
+    bool operator==(const ColumnWithTypeAndName& other) const;
+
+    void dump_structure(std::ostream& out) const;
+    String dump_structure() const;
+    std::string to_string(size_t row_num) const;
+
+    void to_pb_column_meta(PColumnMeta* col_meta) const;
+};
+
+// 定义列的集合
+using ColumnsWithTypeAndName = std::vector<ColumnWithTypeAndName>;
+
+// incubator-doris/be/src/vec/core/block.h
+// block的定义，由列集合构成
+class Block {
+private:
+    using Container = ColumnsWithTypeAndName;
+    using IndexByName = phmap::flat_hash_map<String, size_t>;
+
+    Container data; // 列的集合
+    IndexByName index_by_name; // 列名称，数据大小的map
+};
