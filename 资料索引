@@ -68,3 +68,13 @@ Doris源码解析[一、负载均衡] https://wingsgo.github.io/2020/02/24/doris
 Doris源码解析[二、异步任务之Schema Change] https://wingsgo.github.io/2020/02/24/doris-02-schema_change_task.html
 Doris源码解析[三、BE存储引擎] https://wingsgo.github.io/2020/02/24/doris-03-be_refactor_2019.html
 存储布局：https://xie.infoq.cn/article/4f7d09d6185fb3055d4e7e51c
+
+11.cmu15445
+浏览器打开
+https://15445.courses.cs.cmu.edu/fall2024/slides/
+https://15445.courses.cs.cmu.edu/fall2024/notes/
+页面即列出全部 PDF，右键或 DownThemAll 一键下载
+
+下载链接：
+wget -r -np -nc -A pdf https://15445.courses.cs.cmu.edu/fall2024/slides/
+wget -r -np -nc -A pdf https://15445.courses.cs.cmu.edu/fall2024/notes/
