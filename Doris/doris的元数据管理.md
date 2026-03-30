@@ -13,6 +13,7 @@ Follower Replayer 回放时序图（含 OP_TIMESTAMP 延迟检测）
 Master-Follower 状态转移时序图
 写入与复制时序图
 Checkpoint 五阶段时序图（生成 Image → 推送 Follower → 删除旧日志）
+
 BE 侧元数据管理：
 
 RocksDB 双层存储架构（Level 1 即时 Rowset Meta + Level 2 延迟 Tablet Meta Checkpoint）
