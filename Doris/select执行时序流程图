@@ -1,0 +1,520 @@
+# Apache Doris SELECT 语句执行流程时序图 (Text)
+
+> 基于早期版本，Pre-Nereids，无 Pipeline 引擎）
+
+===============================================================================
+                         参与者说明
+===============================================================================
+
+  Client     - MySQL 客户端
+  CP         - ConnectProcessor (MySQL 协议处理)
+  SE         - StmtExecutor (语句执行器)
+  Parser     - SqlParser / SqlScanner (CUP/JFlex 词法语法解析)
+  Analyzer   - Analyzer (语义分析器)
+  Rewriter   - ExprRewriter / StmtRewriter (表达式/语句重写)
+  Planner    - Planner (查询计划器，总控)
+  SNP        - SingleNodePlanner (单节点计划生成)
+  MV         - MaterializedViewSelector (物化视图选择)
+  DP         - DistributedPlanner (分布式计划生成)
+  RF         - RuntimeFilterGenerator (运行时过滤生成)
+  Coord      - Coordinator (分布式执行协调器)
+  QEP        - QeProcessorImpl (查询注册表)
+  BE         - BE Node (后端执行节点)
+  FM         - FragmentMgr (Fragment 管理器)
+  PFE        - PlanFragmentExecutor (Fragment 执行器)
+  EN         - ExecNode Tree (执行节点树)
+  Scan       - OlapScanNode / VOlapScanNode (扫描节点)
+  BR         - BlockReader (存储引擎读取器)
+  DS         - VDataStreamSender (数据流发送器)
+  DR         - VDataStreamRecvr (数据流接收器)
+  RB         - ResultBufferMgr (结果缓冲管理器)
+
+===============================================================================
+                    Phase 1: 连接建立与 SQL 解析
+===============================================================================
+
+  Client              CP                  Parser
+    |                  |                    |
+    | COM_QUERY        |                    |
+    | (SELECT ...)     |                    |
+    |----------------->|                    |
+    |                  | SqlScanner +       |
+    |                  | SqlParser.parse()  |
+    |                  |------------------->|
+    |                  |                    | 词法分析 + 语法分析
+    |                  |                    | (CUP/JFlex 生成)
+    |                  | List<StatementBase>|
+    |                  | (SelectStmt AST)   |
+    |                  |<-------------------|
+    |                  |                    |
+
+  关键源文件:
+    - fe/fe-core/src/main/java/org/apache/doris/qe/ConnectProcessor.java
+    - fe/fe-core/src/main/cup/sql_parser.cup
+    - fe/fe-core/src/main/jflex/sql_scanner.flex
+    - fe/fe-core/src/main/java/org/apache/doris/common/util/SqlParserUtils.java
+
+===============================================================================
+                    Phase 2: 语义分析
+===============================================================================
+
+  CP                  SE                  Analyzer
+    |                  |                    |
+    | new StmtExecutor |                    |
+    | (ctx, parsedStmt)|                    |
+    |----------------->|                    |
+    |                  |                    |
+    | execute(queryId) |                    |
+    |----------------->|                    |
+    |                  |                    |
+    |                  | analyze(           |
+    |                  |   tQueryOptions)   |
+    |                  |------------------->|
+    |                  |                    |
+    |                  | new Analyzer(      |
+    |                  |   catalog, context)|
+    |                  |------------------->|
+    |                  |                    |
+    |                  | parsedStmt.        |
+    |                  | analyze(analyzer)  |
+    |                  |------------------->|
+    |                  |                    | 解析表引用 (TableRef)
+    |                  |                    | 解析列引用/表达式
+    |                  |                    | 解析 JOIN ON 条件
+    |                  |                    | 解析 WHERE/GROUP BY/
+    |                  |                    |       HAVING/ORDER BY
+    |                  |                    | 创建 TupleDescriptor
+    |                  |                    | 创建 SlotDescriptor
+    |                  |                    | 收集等价类
+    |                  | TupleDescriptor 等 |
+    |                  |<-------------------|
+    |                  |                    |
+
+  关键源文件:
+    - fe/fe-core/src/main/java/org/apache/doris/analysis/Analyzer.java
+    - fe/fe-core/src/main/java/org/apache/doris/analysis/SelectStmt.java
+
+===============================================================================
+                    Phase 3: 表达式重写 (RBO)
+===============================================================================
+
+  SE                  Analyzer             Rewriter
+    |                  |                    |
+    |                  | ExprRewriter.      |
+    |                  | apply()            |
+    |                  |------------------->|
+    |                  |                    | FoldConstantsRule
+    |                  |                    | NormalizePredicateRule
+    |                  |                    | BetweenPredicateRule
+    |                  |                    | CommonFactorRule
+    |                  |                    | InferFiltersRule
+    |                  |  重写后的表达式      |
+    |                  |<-------------------|
+    |                  |                    |
+    |                  | (如有子查询)        |
+    |                  | StmtRewriter.      |
+    |                  | rewrite()          |
+    |                  |------------------->|
+    |                  |                    | 子查询展开
+    |                  |  重写后的 Stmt      |
+    |                  |<-------------------|
+    |                  |                    |
+    |                  | parsedStmt.        |
+    |                  | analyze()          |
+    |                  |  (重新分析)         |
+    |                  |------------------->|
+    |                  |                    |
+
+  关键源文件:
+    - fe/fe-core/src/main/java/org/apache/doris/analysis/ExprRewriter.java
+
+===============================================================================
+                    Phase 4: 查询计划生成
+===============================================================================
+
+---------- Phase 4a: 单节点逻辑计划 ----------
+
+  SE                  Planner              SNP
+    |                  |                    |
+    |                  | new Planner()      |
+    |                  |-------------------->|
+    |                  |                    |
+    |                  | planner.plan(      |
+    |                  |   parsedStmt,      |
+    |                  |   analyzer,        |
+    |                  |   tQueryOptions)   |
+    |                  |-------------------->|
+    |                  |                    |
+    |                  | createSingleNode   |
+    |                  | Plan(queryStmt,ctx)|
+    |                  |------------------->|
+    |                  |                    | createScanNode()
+    |                  |                    |   -> OlapScanNode
+    |                  |                    | createJoinNode()
+    |                  |                    |   -> HashJoinNode
+    |                  |                    | createAggregationPlan()
+    |                  |                    |   -> AggregationNode
+    |                  |                    | createSortPlan()
+    |                  |                    |   -> SortNode
+    |                  |                    | createSelectNode()
+    |                  |                    |   -> SelectNode
+    |                  | PlanNode Tree      |
+    |                  | (单节点逻辑计划)     |
+    |                  |<-------------------|
+
+---------- Phase 4b: 物化视图选择 ----------
+
+  SE                  Planner              MV
+    |                  |                    |
+    |                  | MaterializedView   |
+    |                  | Selector.rewrite() |
+    |                  |------------------->|
+    |                  |                    | 尝试将查询重写为
+    |                  |                    | 使用物化视图
+    |                  | 重写后的 PlanNode   |
+    |                  | Tree               |
+    |                  |<-------------------|
+
+---------- Phase 4c: 分布式计划生成 ----------
+
+  SE                  Planner              DP
+    |                  |                    |
+    |                  | createPlanFragments|
+    |                  | (root, ...)        |
+    |                  |------------------->|
+    |                  |                    | 递归遍历 PlanNode 树
+    |                  |                    | 在数据交换边界切割
+    |                  |                    | 插入 ExchangeNode
+    |                  |                    | 选择分布策略:
+    |                  |                    |   Colocate Join
+    |                  |                    |   Bucket Shuffle Join
+    |                  |                    |   Broadcast Join
+    |                  |                    |   Shuffle Join
+    |                  |                    | 多阶段聚合:
+    |                  |                    |   本地预聚合
+    |                  |                    |   Exchange + 合并聚合
+    |                  | List<PlanFragment> |
+    |                  | + ExchangeNode      |
+    |                  |<-------------------|
+
+---------- Phase 4d: 运行时过滤 & 最终化 ----------
+
+  SE                  Planner              RF
+    |                  |                    |
+    |                  | generateRuntime    |
+    |                  | Filters()          |
+    |                  |------------------->|
+    |                  |                    | 从 Join 谓词生成
+    |                  |                    | IN (Bloom Filter)
+    |                  |                    | MIN/MAX 过滤
+    |                  |                    | 分配到 Probe 侧
+    |                  |                    | ScanNode
+    |                  |<-------------------|
+    |                  |                    |
+    |                  | PlanFragment.      |
+    |                  | finalize()         |
+    |                  |-------------------->|
+    |                  |                    | DataSink 分配:
+    |                  |                    |   DataStreamSink
+    |                  |                    |   (中间 Fragment)
+    |                  |                    |   ResultSink
+    |                  |                    |   (根 Fragment)
+    |                  |<-------------------|
+
+  关键源文件:
+    - fe/fe-core/src/main/java/org/apache/doris/planner/Planner.java
+    - fe/fe-core/src/main/java/org/apache/doris/planner/SingleNodePlanner.java
+    - fe/fe-core/src/main/java/org/apache/doris/planner/DistributedPlanner.java
+    - fe/fe-core/src/main/java/org/apache/doris/planner/PlanFragment.java
+
+===============================================================================
+                    Phase 5: 分布式执行调度
+===============================================================================
+
+---------- Phase 5a: Coordinator 准备 ----------
+
+  SE                  Coord                QEP
+    |                  |                    |
+    | handleQueryStmt()|                    |
+    |----------------->|                    |
+    |                  |                    |
+    | new Coordinator( |                    |
+    |   ctx, analyzer, |                    |
+    |   planner)       |                    |
+    |----------------->|                    |
+    |                  |                    |
+    | registerQuery(   |                    |
+    |   queryId, coord)|                    |
+    |--------------------------------------->|
+    |                  |                    |
+    | exec()           |                    |
+    |----------------->|                    |
+    |                  |                    |
+    |                  | prepare()          |
+    |                  |-------------------->|
+    |                  |                    | 初始化 Fragment 参数
+    |                  |<--------------------|
+    |                  |                    |
+    |                  | computeScanRange   |
+    |                  | Assignment()       |
+    |                  |-------------------->|
+    |                  |                    | Tablet -> BE 节点分配
+    |                  |<--------------------|
+    |                  |                    |
+    |                  | computeFragment    |
+    |                  | ExecParams()       |
+    |                  |-------------------->|
+    |                  |                    | 构建每个 Fragment
+    |                  |                    | 的 Thrift 执行参数
+    |                  |<--------------------|
+    |                  |                    |
+
+---------- Phase 5b: Fragment 分发到 BE (循环) ----------
+
+  Coord               BE                   FM                   PFE
+    |                  |                    |                     |
+    | sendFragment()   |                    |                     |
+    | (从叶子到根循环)   |                    |                     |
+    |                  |                    |                     |
+    | exec_plan_fragment                    |                     |
+    | RPC (Thrift)    |                    |                     |
+    |----------------->|                    |                     |
+    |                  | FragmentMgr.       |                     |
+    |                  | exec_plan_fragment()|                     |
+    |                  |------------------->|                     |
+    |                  |                    |                     |
+    |                  |                    | 创建/复用            |
+    |                  |                    | QueryFragmentsCtx    |
+    |                  |                    | (共享 DescriptorTbl) |
+    |                  |                    |                     |
+    |                  |                    | 创建 FragmentExecState|
+    |                  |                    |                     |
+    |                  |                    | FragmentExecState.   |
+    |                  |                    | prepare()            |
+    |                  |                    |--------------------->|
+    |                  |                    |                     |
+    |                  |                    |                     | 创建 RuntimeState
+    |                  |                    |                     | ExecNode::create_tree()
+    |                  |                    |                     |   (TPlan -> ExecNode树)
+    |                  |                    |                     | _plan->prepare(state)
+    |                  |                    |                     | 分配 ScanRange
+    |                  |                    |                     | 创建 DataSink
+    |                  |                    |                     |   (中间 Fragment)
+    |                  |                    |<---------------------|
+    |                  |                    |                     |
+    |                  |                    | 线程池提交            |
+    |                  |                    | FragmentExecState.   |
+    |                  |                    | execute()            |
+    |                  |                    |--------------------->|
+    |                  |                    |                     |
+    | <--- ACK -------|                    |                     |
+    |                  |                    |                     |
+    | [循环下一个 Fragment]                    |                     |
+    |                  |                    |                     |
+
+  关键源文件:
+    - fe/fe-core/src/main/java/org/apache/doris/qe/Coordinator.java
+    - fe/fe-core/src/main/java/org/apache/doris/qe/QeProcessorImpl.java
+    - be/src/runtime/fragment_mgr.h/.cpp
+    - be/src/runtime/plan_fragment_executor.h/.cpp
+
+===============================================================================
+                    Phase 6: BE 端执行 (Volcano Pull 模型)
+===============================================================================
+
+  PFE                 EN                   Scan                BR
+    |                  |                    |                    |
+    | open()           |                    |                    |
+    |----------------->|                    |                    |
+    |                  | _plan->open(state)  |                    |
+    |                  |-------------------->|                    |
+    |                  |                    |                    |
+    |                  |                    | ExchangeNode.open() |
+    |                  |                    |  创建 DataStreamRecvr|
+    |                  |                    |                    |
+    |                  |                    | OlapScanNode.open() |
+    |                  |                    |  启动 Scanner 线程   |
+    |                  |                    |-------------------->|
+    |                  |                    |                    |
+    |                  |                    |                    | BlockReader.init()
+    |                  |                    |                    | 打开 RowsetReader
+    |                  |                    |                    |
+    |                  |                    |                    | 读取策略:
+    |                  |                    |                    |  _direct_next_block()
+    |                  |                    |                    |    (DUPLICATE KEY)
+    |                  |                    |                    |  _direct_agg_key...
+    |                  |                    |                    |    (AGGREGATE KEY)
+    |                  |                    |                    |  _agg_key_next_block()
+    |                  |                    |                    |    (多 rowset 合并)
+    |                  |                    |                    |  _unique_key_next_block()
+    |                  |                    |                    |    (UNIQUE KEY 版本合并)
+    |                  |                    |                    |
+    |                  |                    |                    | VCollectIterator
+    |                  |                    |                    |  合并 Rowset/Segment
+    |                  |                    |                    |
+    |                  |                    | Block              |
+    |                  |                    |<-------------------|
+    |                  | Block              |                    |
+    |                  |<-------------------|                    |
+    |                  |                    |                    |
+
+---------- 中间 Fragment: 数据发送 ----------
+
+  PFE                 EN                   DS                   DR
+    |                  |                    |                     |
+    | [循环]            |                    |                     |
+    |                  |                    |                     |
+    | get_next(state,  |                    |                     |
+    | block)           |                    |                     |
+    |----------------->|                    |                     |
+    |                  | Block              |                     |
+    |<-----------------|                    |                     |
+    |                  |                    |                     |
+    | _sink->send(     |                    |                     |
+    |   state, block)  |                    |                     |
+    |------------------------------------------>                 |
+    |                  |                    |                     |
+    |                  |                    | Channel.send_block()|
+    |                  |                    |                     |
+    |                  |                    |---[远程]------------>|
+    |                  |                    | brpc transmit_block()| VDataStreamMgr::
+    |                  |                    |                     | transmit_block()
+    |                  |                    |                     | -> add_block()
+    |                  |                    |                     |
+    |                  |                    |---[本地]------------>|
+    |                  |                    | 直接 add 到          | VDataStreamRecvr::
+    |                  |                    |  DataStreamRecvr     | add_block()
+    |                  |                    |                     |
+    | [循环直到 eos]    |                    |                     |
+    |                  |                    |                     |
+
+  流控: DataStreamRecvr 有 _total_buffer_limit
+         缓冲超限时停止 ACK，提供反压
+
+  关键源文件:
+    - be/src/exec/exec_node.h
+    - be/src/vec/exec/volap_scan_node.h
+    - be/src/vec/exec/volap_scanner.h
+    - be/src/vec/olap/block_reader.h
+    - be/src/vec/sink/vdata_stream_sender.h
+    - be/src/vec/runtime/vdata_stream_mgr.h
+
+===============================================================================
+                    Phase 7: 结果返回到客户端
+===============================================================================
+
+  SE                  Coord                BE                   RB
+    |                  |                    |                    |
+    | coord.getNext()  |                    |                    |
+    | [循环]            |                    |                    |
+    |----------------->|                    |                    |
+    |                  | fetch_data RPC     |                    |
+    |                  |------------------->|                    |
+    |                  |                    |                    |
+    |                  |                    | ResultBufferMgr.   |
+    |                  |                    | fetch_data()       |
+    |                  |                    |------------------->|
+    |                  |                    |                    |
+    |                  |                    | BufferControlBlock |
+    |                  |                    | .get_batch()       |
+    |                  |                    |<-------------------|
+    |                  |                    |                    |
+    |                  |                    | PlanFragmentExecutor|
+    |                  |                    | .get_next()        |
+    |                  |                    |                    |
+    |                  |                    | _plan->get_next()  |
+    |                  |                    | (ExecNode 树拉取)   |
+    |                  |                    |                    |
+    |                  | 结果批次 (Block)    |                    |
+    |                  |<-------------------|                    |
+    |                  |                    |                    |
+    | RowBatch         |                    |                    |
+    |<-----------------|                    |                    |
+    |                  |                    |                    |
+    | channel.         |                    |                    |
+    | sendOnePacket()  |                    |                    |
+    | (MySQL 结果包)    |                    |                    |
+    | [发送列定义 + 数据行] |                 |                    |
+    |                  |                    |                    |
+  Client <----------|                    |                    |
+    |                  |                    |                    |
+    | [循环直到 batch.isEos()]               |                    |
+    |                  |                    |                    |
+    | EOF 包           |                    |                    |
+  Client <----------|                    |                    |
+    |                  |                    |                    |
+
+  关键源文件:
+    - fe/fe-core/src/main/java/org/apache/doris/qe/StmtExecutor.java  (handleQueryStmt)
+    - be/src/runtime/result_buffer_mgr.h
+    - be/src/runtime/buffer_control_block.h
+    - be/src/runtime/result_sink.h
+
+===============================================================================
+                    Phase 8: 执行状态汇报
+===============================================================================
+
+  BE                  FM                   Coord
+    |                  |                    |
+    | [定期/完成后]     |                    |
+    |                  |                    |
+    | coordinator_     |                    |
+    | callback()       |                    |
+    |----------------->|                    |
+    |                  | reportExecStatus   |
+    |                  | RPC (Thrift)       |
+    |                  |-------------------->|
+    |                  |                    |
+    |                  |                    | 更新 Fragment 状态
+    |                  |                    | 收集 Runtime Profile
+    |                  |                    | 错误日志/计数器
+    |                  |                    |
+    |                  |<--------------------|
+    |                  |                    |
+
+===============================================================================
+                    完整调用链总结
+===============================================================================
+
+  PaloFe.main()
+    |
+    +-- QeService.start()
+    |     +-- MysqlServer.Listener.run()       [接受 MySQL 连接]
+    |
+    +-- ConnectScheduler.LoopHandler.run()
+    |     +-- MysqlProto.negotiate()            [MySQL 握手/认证]
+    |     +-- ConnectProcessor.loop()
+    |           +-- dispatch() -> handleQuery() [COM_QUERY]
+    |           +-- SqlParser.parse()           [SQL -> AST]
+    |
+    +-- StmtExecutor.execute()
+    |     +-- analyze()
+    |     |     +-- SelectStmt.analyze()        [语义分析]
+    |     |     +-- ExprRewriter.apply()        [表达式重写 RBO]
+    |     |     +-- StmtRewriter.rewrite()      [子查询展开]
+    |     |
+    |     +-- Planner.plan()
+    |     |     +-- SingleNodePlanner           [AST -> PlanNode 树]
+    |     |     +-- MaterializedViewSelector    [物化视图重写]
+    |     |     +-- DistributedPlanner          [PlanNode -> Fragment]
+    |     |     +-- RuntimeFilterGenerator      [运行时过滤]
+    |     |
+    |     +-- Coordinator.exec()
+    |     |     +-- prepare()
+    |     |     +-- computeScanRangeAssignment() [Tablet 分配]
+    |     |     +-- computeFragmentExecParams()
+    |     |     +-- sendFragment()             [RPC -> BE]
+    |     |
+    |     +-- coord.getNext() 循环             [拉取结果]
+    |           +-- fetch_data RPC -> BE
+    |           +-- channel.sendOnePacket() -> MySQL Client
+    |
+    +-- BE: FragmentMgr -> PlanFragmentExecutor
+          +-- prepare() -> ExecNode::create_tree()
+          +-- open() -> _plan->open()
+          +-- get_next() 循环 -> Block
+          +-- VDataStreamSender.send() -> ExchangeNode (Fragment 间)
+          +-- ResultBufferMgr.fetch_data() -> FE (结果返回)
+          +-- coordinator_callback() -> reportExecStatus (状态汇报)
+
+===============================================================================
