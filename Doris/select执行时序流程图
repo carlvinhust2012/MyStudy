@@ -33,7 +33,7 @@
                     Phase 1: 连接建立与 SQL 解析
 ===============================================================================
 
-  Client              CP                  Parser
+  Client        ConnectProcessor          Parser
     |                  |                    |
     | COM_QUERY        |                    |
     | (SELECT ...)     |                    |
@@ -58,7 +58,7 @@
                     Phase 2: 语义分析
 ===============================================================================
 
-  CP                  SE                  Analyzer
+ConnectProcessor    StmtExecutor          Analyzer
     |                  |                    |
     | new StmtExecutor |                    |
     | (ctx, parsedStmt)|                    |
@@ -98,7 +98,7 @@
                     Phase 3: 表达式重写 (RBO)
 ===============================================================================
 
-  SE                  Analyzer             Rewriter
+  StmtExecutor      Analyzer             Rewriter
     |                  |                    |
     |                  | ExprRewriter.      |
     |                  | apply()            |
@@ -134,7 +134,7 @@
 
 ---------- Phase 4a: 单节点逻辑计划 ----------
 
-  SE                  Planner              SNP
+StmtExecutor         Planner           SingleNodePlanner
     |                  |                    |
     |                  | new Planner()      |
     |                  |-------------------->|
@@ -164,7 +164,7 @@
 
 ---------- Phase 4b: 物化视图选择 ----------
 
-  SE                  Planner              MV
+StmtExecutor         Planner         MaterializedViewSelector
     |                  |                    |
     |                  | MaterializedView   |
     |                  | Selector.rewrite() |
@@ -177,7 +177,7 @@
 
 ---------- Phase 4c: 分布式计划生成 ----------
 
-  SE                  Planner              DP
+StmtExecutor        Planner              DistributedPlanner
     |                  |                    |
     |                  | createPlanFragments|
     |                  | (root, ...)        |
@@ -199,7 +199,7 @@
 
 ---------- Phase 4d: 运行时过滤 & 最终化 ----------
 
-  SE                  Planner              RF
+StmtExecutor         Planner          RuntimeFilterGenerator
     |                  |                    |
     |                  | generateRuntime    |
     |                  | Filters()          |
@@ -233,7 +233,7 @@
 
 ---------- Phase 5a: Coordinator 准备 ----------
 
-  SE                  Coord                QEP
+StmtExecutor       Coordinator         QeProcessorImpl
     |                  |                    |
     | handleQueryStmt()|                    |
     |----------------->|                    |
@@ -271,7 +271,7 @@
 
 ---------- Phase 5b: Fragment 分发到 BE (循环) ----------
 
-  Coord               BE                   FM                   PFE
+Coordinator           BE                FragmentMgr       PlanFragmentExecutor
     |                  |                    |                     |
     | sendFragment()   |                    |                     |
     | (从叶子到根循环)   |                    |                     |
@@ -322,7 +322,7 @@
                     Phase 6: BE 端执行 (Volcano Pull 模型)
 ===============================================================================
 
-  PFE                 EN                   Scan                BR
+PlanFragmentExecutor  ExecNode Tree     OlapScanNode         BlockReader
     |                  |                    |                    |
     | open()           |                    |                    |
     |----------------->|                    |                    |
@@ -360,7 +360,7 @@
 
 ---------- 中间 Fragment: 数据发送 ----------
 
-  PFE                 EN                   DS                   DR
+PlanFragmentExecutor ExecNode Tree     VDataStreamSender     VDataStreamRecvr
     |                  |                    |                     |
     | [循环]            |                    |                     |
     |                  |                    |                     |
@@ -403,7 +403,7 @@
                     Phase 7: 结果返回到客户端
 ===============================================================================
 
-  SE                  Coord                BE                   RB
+StmtExecutor       Coordinator              BE              ResultBufferMgr
     |                  |                    |                    |
     | coord.getNext()  |                    |                    |
     | [循环]            |                    |                    |
@@ -454,7 +454,7 @@
                     Phase 8: 执行状态汇报
 ===============================================================================
 
-  BE                  FM                   Coord
+  BE                FragmentMgr          Coordinator
     |                  |                    |
     | [定期/完成后]     |                    |
     |                  |                    |
