@@ -215,7 +215,7 @@ sequenceDiagram
     participant S3 as Storage Member 3
 
     Note over App,FDB: 
-    Phase 1: 文件创建 / 打开
+    Phase 1: 文件创建并打开
     App->>FUSE: create(path, mode) / open(path, O_RDWR)
     FUSE->>FUSE: 生成 SessionId::random()
     FUSE->>MC: CreateReq(parent, name, mode, session)
