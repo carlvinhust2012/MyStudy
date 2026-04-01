@@ -214,7 +214,6 @@ sequenceDiagram
     participant S2 as Storage Member 2
     participant S3 as Storage Member 3
 
-    rect rgb(240, 248, 255)
     Note over App,FDB: Phase 1: 文件创建 / 打开
     App->>FUSE: create(path, mode) / open(path, O_RDWR)
     FUSE->>FUSE: 生成 SessionId::random()
@@ -232,7 +231,6 @@ sequenceDiagram
     FUSE-->>App: fd
     end
 
-    rect rgb(255, 248, 240)
     Note over App,S3: Phase 2: 数据写入
     App->>FUSE: write(fd, data, size)
 
@@ -271,7 +269,6 @@ sequenceDiagram
     RC->>RC: finishWrite() — bump written, update hintLength
     end
 
-    rect rgb(240, 255, 240)
     Note over App,FDB: Phase 3: 元数据同步
     App->>FUSE: fsync(fd) / 或后台周期 sync
     FUSE->>MC: SyncReq(inodeId, hintLength, atime, mtime)
@@ -289,7 +286,6 @@ sequenceDiagram
     FUSE-->>App: fsync 返回
     end
 
-    rect rgb(255, 240, 245)
     Note over App,FDB: Phase 4: 文件关闭
     App->>FUSE: close(fd)
     FUSE->>RC: 移除 dirtyInodes, 释放 FileHandle
