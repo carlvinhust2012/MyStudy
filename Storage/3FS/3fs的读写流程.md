@@ -271,9 +271,9 @@ sequenceDiagram
     FUSE->>MC: SyncReq(inodeId, hintLength, atime, mtime)
     MC->>MS: SyncReq RPC
     MS->>MS: merge hintLength (合并多个并发 sync)
-    opt hintLength 有效 且 >= 已存长度
-        MS->>MS: 跳过查询存储 (优化)
-    else hintLength 无效
+    opt hintLength有效
+        MS->>MS: 跳过查询存储
+    else hintLength无效
         MS->>SC: queryLength() - 查询存储服务器
         SC-->>MS: 实际文件长度
     end
