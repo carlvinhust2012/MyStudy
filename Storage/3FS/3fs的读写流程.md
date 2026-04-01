@@ -199,7 +199,6 @@ sequenceDiagram
 ## 二、写流程
 
 ### 2.1 写时序总览
-
 ```mermaid
 sequenceDiagram
     participant App as Application
@@ -214,13 +213,12 @@ sequenceDiagram
     participant S2 as Storage Member 2
     participant S3 as Storage Member 3
 
-    Note over App,FDB: 
-    Phase 1: 文件创建并打开
+    Note over App,FDB: === Phase 1: 文件创建/打开 ===
     App->>FUSE: create(path, mode) / open(path, O_RDWR)
     FUSE->>FUSE: 生成 SessionId::random()
     FUSE->>MC: CreateReq(parent, name, mode, session)
     MC->>MS: CreateReq RPC
-    MS->>MS: PathResolve — 解析父目录路径
+    MS->>MS: PathResolve - 解析父目录路径
     MS->>MS: 分配 InodeId (原子递增, 32 分片)
     MS->>FDB: txn.set(DENT + parent + name, DirEntryData)
     MS->>FDB: txn.set(INOD + inodeId, InodeData)
@@ -228,16 +226,14 @@ sequenceDiagram
     FDB-->>MS: commit OK
     MS-->>MC: Inode + Layout
     MC-->>FUSE: Inode (含 Layout)
-    FUSE->>RC: 缓存 Inode → RcInode
+    FUSE->>RC: 缓存 Inode -> RcInode
     FUSE-->>App: fd
-    end
 
-    Note over App,S3: 
-    Phase 2: 数据写入
+    Note over App,S3: === Phase 2: 数据写入 ===
     App->>FUSE: write(fd, data, size)
 
     alt 缓冲写 (默认)
-        FUSE->>RC: memcpy data → InodeWriteBuf
+        FUSE->>RC: memcpy data -> InodeWriteBuf
         FUSE-->>App: 立即返回 size (异步刷写)
         Note over FUSE: 后续触发 flushBuf()
     else O_DIRECT
@@ -245,34 +241,32 @@ sequenceDiagram
     end
 
     Note over RC: flushBuf() 执行
-    RC->>MC: beginWrite() → extendStripe (若需要)
+    RC->>MC: beginWrite() -> extendStripe (若需要)
     MC->>MS: SetAttrReq::extendStripe
     MS->>FDB: 更新 Inode.dynStripe
     MS-->>MC: OK
 
-    RC->>PioV: addWrite() — 按 chunkSize 拆分为 WriteIOs
+    RC->>PioV: addWrite() - 按 chunkSize 拆分为 WriteIOs
     PioV->>SC: batchWrite(writeIOs)
     SC->>SC: 选择链头 Target (HeadTarget)
     SC->>SH: WriteReq(chain, chunkId, data, RDMA buffer)
 
     Note over SH,S3: 链式复制协议 (5 步)
     SH->>SH: Step 1: 获取 Chunk 锁
-    SH->>SH: Step 2: doUpdate() — 本地写入
-    SH->>S2: Step 3: forward() — 转发到后继
+    SH->>SH: Step 2: doUpdate() - 本地写入
+    SH->>S2: Step 3: forward() - 转发到后继
     S2->>S2: 本地写入, 生成 checksum
     S2->>S3: 继续转发
     S3->>S3: 本地写入, commit
     S3-->>S2: ACK (含 checksum)
     S2-->>SH: ACK (含 checksum)
-    SH->>SH: Step 4: doCommit() — 本地提交
+    SH->>SH: Step 4: doCommit() - 本地提交
     SH->>SH: Step 5: 比对 checksum (数据完整性校验)
     SH-->>SC: WriteRsp (length, checksum)
     SC-->>RC: 写完成
-    RC->>RC: finishWrite() — bump written, update hintLength
-    end
+    RC->>RC: finishWrite() - bump written, update hintLength
 
-    Note over App,FDB: 
-    Phase 3: 元数据同步
+    Note over App,FDB: === Phase 3: 元数据同步 ===
     App->>FUSE: fsync(fd) / 或后台周期 sync
     FUSE->>MC: SyncReq(inodeId, hintLength, atime, mtime)
     MC->>MS: SyncReq RPC
@@ -280,25 +274,22 @@ sequenceDiagram
     opt hintLength 有效 且 >= 已存长度
         MS->>MS: 跳过查询存储 (优化)
     else hintLength 无效
-        MS->>SC: queryLength() — 查询存储服务器
+        MS->>SC: queryLength() - 查询存储服务器
         SC-->>MS: 实际文件长度
     end
     MS->>FDB: 更新 Inode.length, truncateVer, mtime, ctime
     MS-->>MC: OK
     MC-->>FUSE: OK
     FUSE-->>App: fsync 返回
-    end
 
-    Note over App,FDB: 
-    Phase 4: 文件关闭
+    Note over App,FDB: === Phase 4: 文件关闭 ===
     App->>FUSE: close(fd)
     FUSE->>RC: 移除 dirtyInodes, 释放 FileHandle
     FUSE->>MC: CloseReq(inodeId, session)
     MC->>MS: CloseReq RPC
-    MS->>MS: syncAndClose() — 同步长度 + 删除会话
+    MS->>MS: syncAndClose() - 同步长度 + 删除会话
     MS->>FDB: 删除 INOS + inodeId + sessionId (释放写租约)
     MS-->>MC: OK
-    end
 ```
 
 ### 2.2 写流程关键步骤详解
