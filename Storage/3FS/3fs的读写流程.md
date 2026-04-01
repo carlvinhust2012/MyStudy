@@ -214,7 +214,8 @@ sequenceDiagram
     participant S2 as Storage Member 2
     participant S3 as Storage Member 3
 
-    Note over App,FDB: Phase 1: 文件创建 / 打开
+    Note over App,FDB: 
+    Phase 1: 文件创建 / 打开
     App->>FUSE: create(path, mode) / open(path, O_RDWR)
     FUSE->>FUSE: 生成 SessionId::random()
     FUSE->>MC: CreateReq(parent, name, mode, session)
@@ -231,7 +232,8 @@ sequenceDiagram
     FUSE-->>App: fd
     end
 
-    Note over App,S3: Phase 2: 数据写入
+    Note over App,S3: 
+    Phase 2: 数据写入
     App->>FUSE: write(fd, data, size)
 
     alt 缓冲写 (默认)
@@ -269,7 +271,8 @@ sequenceDiagram
     RC->>RC: finishWrite() — bump written, update hintLength
     end
 
-    Note over App,FDB: Phase 3: 元数据同步
+    Note over App,FDB: 
+    Phase 3: 元数据同步
     App->>FUSE: fsync(fd) / 或后台周期 sync
     FUSE->>MC: SyncReq(inodeId, hintLength, atime, mtime)
     MC->>MS: SyncReq RPC
@@ -286,7 +289,8 @@ sequenceDiagram
     FUSE-->>App: fsync 返回
     end
 
-    Note over App,FDB: Phase 4: 文件关闭
+    Note over App,FDB: 
+    Phase 4: 文件关闭
     App->>FUSE: close(fd)
     FUSE->>RC: 移除 dirtyInodes, 释放 FileHandle
     FUSE->>MC: CloseReq(inodeId, session)
