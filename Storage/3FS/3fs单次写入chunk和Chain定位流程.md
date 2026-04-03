@@ -167,11 +167,8 @@ sequenceDiagram
 
     Note over App,HJ: batchWrite — 按 Chain 分组
 
-    RC->>SC: batchWrite([
-      Note over SC: Chunk0@(1MB,3MB), Chunk1@(4MB,4MB), ..., Chunk125@(500MB,1MB)
-      Note over SC: 共 126 个 WriteIO
-    ])
-
+    RC->>SC: batchWrite(Chunk0@(1MB,3MB), Chunk1@(4MB,4MB), ..., Chunk125@(500MB,1MB) 共 126 个 WriteIO)
+    
     SC->>SC: groupOpsByNodeId()
     Note over SC: Chain0: 32 IOs → T_A<br/>Chain1: 32 IOs → T_D<br/>Chain2: 31 IOs → T_G<br/>Chain3: 31 IOs → T_J
 
