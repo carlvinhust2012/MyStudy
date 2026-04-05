@@ -132,6 +132,7 @@ RADOS 对象命名（src/include/object.h:79 — file_object_t）:
 
 ### 2.4 目录布局
 
+
 ```c
 // src/include/ceph_fs.h:86-92
 struct ceph_dir_layout {
