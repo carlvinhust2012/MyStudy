@@ -1,4 +1,4 @@
-# JuiceFS 数据一致性保证机制分析
+# JuiceFS 数据一致性保证机制深度分析
 
 ---
 
@@ -592,6 +592,33 @@ sequenceDiagram
 | `StaleSessionTimeout` | 显式超时（覆盖计算值） | 0（使用计算值） |
 | jitter | 心跳随机抖动 | 0-30% |
 
+### 7.5 优雅关机
+
+```go
+// pkg/meta/base.go:935
+func (m *baseMeta) CloseSession() error {
+    m.FlushSession()
+    m.umounting = true
+    m.en.doCleanStaleSession(m.sid)  // 与 stale session 相同的清理逻辑
+    m.sessCtx.Cancel()
+    m.sessWG.Wait()                  // 等待所有后台 goroutine
+    m.stopDeleteSliceTasks()
+}
+```
+
+优雅关机调用与 stale session 清理相同的 `doCleanStaleSession` 函数，确保锁释放、sustained inodes 删除、会话移除。
+
+### 7.6 幂等删除
+
+```go
+// pkg/chunk/cached_store.go:336-354
+func (store *cachedStore) delete(key string) error {
+    err := store.storage.Delete(ctx, key, ...)
+    // "NoSuchKey" / "not found" / "No such file" → err = nil
+    // 已删除的 key 返回成功，保证幂等性
+}
+```
+
 ---
 
 ## 8. 文件删除与垃圾回收一致性
@@ -665,6 +692,48 @@ GC 时:   从 delSlices 取出 → 从对象存储删除
 | 清理孤儿对象 | 对象存储中存在但 `sliceRef` 中无记录的对象 |
 | 回收站清理 | `TrashDays` 天前的已删文件 |
 | 修复引用计数 | 检测并修复不一致的引用计数 |
+
+### 8.4 Compaction 并发控制
+
+Chunk 压缩是后台运行的优化操作，需要保证并发安全：
+
+```go
+// pkg/meta/base.go:2679
+compacting map[uint64]bool  // 防止重复压缩
+
+// Redis doCompactChunk (redis.go:3514):
+// 1. WATCH chunk key
+// 2. 读取当前 slice 列表，验证未并发修改
+// 3. LTrim 删除旧 slice → LPush 写入新合并 slice
+// 4. 旧 slice refcount 递减（或延迟删除）
+// 5. 如果事务失败但新 slice 已写入 → 幂等处理
+```
+
+**SQL 使用悲观锁**替代乐观 WATCH：
+
+```go
+// pkg/meta/sql.go:3573
+s.ForUpdate().MustCols("indx").Get(&c2)  // SELECT FOR UPDATE 行锁
+if !bytes.Equal(origin, c2.Slices[:len(origin)]) {
+    return syscall.EINVAL  // 并发修改，放弃压缩
+}
+s.Cols("slices").Where(...).Update(c2)  // 原子替换
+```
+
+### 8.5 有界异步删除
+
+```go
+// pkg/meta/base.go:2849,363
+m.maxDeleting <- struct{}{}  // 并发限制 100
+// 非强制删除：达到上限时跳过，由后台 cleanupDeletedFiles 补偿
+
+// pkg/meta/base.go:795,798
+m.dslices = make(chan Slice, m.conf.MaxDeletes*10240)
+// MaxDeletes 个 worker goroutine 消费删除队列
+
+// pkg/meta/base.go:983
+// cleanupDeletedFiles: 每小时运行，处理超过 1 小时的 delfiles
+```
 
 ---
 
