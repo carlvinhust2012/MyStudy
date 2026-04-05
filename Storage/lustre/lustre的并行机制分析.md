@@ -269,7 +269,7 @@ sequenceDiagram
         O3-->>C: 数据
     end
 
-    Note over A,B,C: 三个客户端完全并行，互不阻塞
+    Note over A,C: 三个客户端完全并行互不阻塞
 ```
 
 ---
@@ -312,7 +312,7 @@ sequenceDiagram
     Note over LLite: 目标 MDT = 2
 
     LLite->>MDC2: MDS_LOOKUP(file_a) 直接发往 MDT_2
-    Note over LLite,MDC2: 跳过 MDT_0/1/3，无串行等待
+    Note over LLite: 跳过 MDT_0/1/3 无串行等待
 
     MDC2-->>LLite: 返回 file_a 的 FID + 属性
     LLite-->>App: stat 结果
@@ -346,7 +346,7 @@ sequenceDiagram
         M3-->>C: FID
     end
 
-    Note over A,B,C: 三个客户端并行操作不同 MDT<br/>互不阻塞
+    Note over A,C: 三个客户端并行操作不同 MDT 互不阻塞
 ```
 
 ### 4.4 FID 本地分配（消除元数据分配瓶颈）
@@ -361,13 +361,13 @@ sequenceDiagram
 
     loop 创建文件（前 32M 个）
         Client->>Local: 本地分配 FID (seq++, oid++)
-        Note over Client,Local: 无需 RPC，零延迟
+        Note over Local: 无需 RPC 零延迟
     end
 
     Local->>Local: 本地 seq 范围即将耗尽
     Local->>MDT: 批量请求新 seq 范围
     MDT-->>Local: 分配新的 32M FID 范围
-    Note over Client,MDT: 后续 32M 次创建无需通信
+    Note over Client: 后续 32M 次创建无需通信
 ```
 
 **关键参数**（[lustre_fid.h](lustre/include/lustre_fid.h)）：
@@ -416,7 +416,7 @@ sequenceDiagram
     participant O_NIC as OST NIC<br/>(RDMA)
     participant DISK as OST Disk<br/>(ldiskfs)
 
-    Note over C_Client,O_Server: 读操作流程
+    Note over C_Client: 读操作流程
 
     C_Client->>C_NIC: 注册本地内存 buffer (MR)
     C_Client->>O_Server: BRW_READ RPC<br/>包含: FID, offset, length,<br/>RDMA rkey + 虚拟地址
