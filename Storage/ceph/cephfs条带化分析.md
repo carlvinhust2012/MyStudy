@@ -1,5 +1,8 @@
 # CephFS 条带化机制分析
 
+> 源码版本：`/home/hugo/hugo/ceph-main`
+> 分析日期：2026-04-07
+
 ---
 
 ## 目录
@@ -226,7 +229,7 @@ sequenceDiagram
     C->>S: file_to_extents(layout, 10MB, 8MB)
     Note over S: 算法执行:<br/>blockno = 10MB/su<br/>stripeno = blockno/sc<br/>objectno = objectsetno*sc + stripepos
 
-    S-->>C: vector&lt;ObjectExtent&gt;<br/>[{obj="100.00000002", off=2MB, len=4MB, buf_map=[...]},<br/> {obj="100.00000003", off=0, len=4MB, buf_map=[...]}]
+    S-->>C: 返回 2 个 ObjectExtent 对象
 
     C->>O: sg_write_trunc(extents, snapc, bl, ...)
     Note over O: 按 buffer_extents 拆分 bl<br/>将对应的数据段发送到各对象
@@ -287,7 +290,7 @@ sequenceDiagram
 
     C->>S: file_to_extents(layout, 5MB, 6MB)
 
-    S-->>C: vector&lt;ObjectExtent&gt;<br/>[{obj="100.00000001", off=1MB, len=3MB},<br/> {obj="100.00000002", off=0, len=3MB}]
+    S-->>C: 返回 2 个 ObjectExtent 对象
 
     C->>O: sg_read_trunc(extents, snap, bl, ...)
 
