@@ -1,8 +1,5 @@
 # CephFS 条带化机制分析
 
-> 源码版本：`/home/hugo/hugo/ceph-main`
-> 分析日期：2026-04-07
-
 ---
 
 ## 目录
