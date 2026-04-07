@@ -108,6 +108,7 @@ while (left > 0) {
 }
 ```
 
+```
 示例 (stripe_unit=64K, stripe_count=4, object_size=4M):
   文件 0-64K     → 对象 0, 偏移 0
   文件 64K-128K   → 对象 1, 偏移 0
