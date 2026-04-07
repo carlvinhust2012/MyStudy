@@ -3,7 +3,7 @@
 > 基于早期版本，Pre-Nereids，无 Pipeline 引擎
 
 FE 侧元数据管理：
-
+```
 WAL + Image 检查点架构（与 HDFS NameNode 同构）
 BDBJE 存储细节（B-Tree KV、滚动数据库、paxos 式共识）
 JournalEntity 序列化格式与 60+ 操作类型分类
@@ -13,9 +13,10 @@ Follower Replayer 回放时序图（含 OP_TIMESTAMP 延迟检测）
 Master-Follower 状态转移时序图
 写入与复制时序图
 Checkpoint 五阶段时序图（生成 Image → 推送 Follower → 删除旧日志）
+```
 
 BE 侧元数据管理：
-
+```
 RocksDB 双层存储架构（Level 1 即时 Rowset Meta + Level 2 延迟 Tablet Meta Checkpoint）
 OlapMeta 封装（3 个 Column Family、4 字节前缀提取器）
 TabletMeta / RowsetMeta 完整字段说明与状态机
@@ -24,6 +25,7 @@ Tablet Meta Checkpoint 时序图
 BE-FE Tablet Report 时序图
 Compaction 元数据原子更新流程
 崩溃恢复时序图与后台修复线程
+```
 
 ## 一、总体架构
 
