@@ -349,7 +349,7 @@ sequenceDiagram
         par 多个条带并行
             LOV->>OSC0: osc_queue_async_io(page 0~255)
             LOV->>OSC1: osc_queue_async_io(page 256~511)
-            LOV->OSC1->>OSC2: osc_queue_async_io(page 512~767)
+            LOV->>OSC2: osc_queue_async_io(page 512~767)
             LOV->>OSC3: osc_queue_async_io(page 768~1023)
         end
 
