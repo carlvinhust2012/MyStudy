@@ -28,7 +28,7 @@
 
 ## 1. braft 概述
 
-braft 是百度开源的 Raft 一致性算法实现（基于 [brpc](https://github.com/apache/incubator-brpc)），用于百度内部多个分布式系统。核心特性：
+braft 是百度开源的 Raft 一致性算法实现（基于 [brpc](https://github.com/apache/incubator-brpc)），用于 CDS、百度内部多个分布式系统。核心特性：
 
 | 特性 | 说明 |
 |------|------|
@@ -168,8 +168,8 @@ Pre-Vote 是 Raft 论文 9.6 节的优化，用于避免网络分区中的节点
 ```mermaid
 sequenceDiagram
     participant F as Follower (本节点)
-    peer P1 as Peer 1
-    peer P2 as Peer 2
+    participant P1 as Peer 1
+    participant P2 as Peer 2
 
     Note over F: election_timeout 触发
 
@@ -242,8 +242,8 @@ message RequestVoteResponse {
 ```mermaid
 sequenceDiagram
     participant C as Candidate
-    peer P1 as Peer 1
-    peer P2 as Peer 2
+    participant P1 as Peer 1
+    participant P2 as Peer 2
 
     Note over C: pre-vote 成功，进入 elect_self
 
@@ -487,7 +487,7 @@ sequenceDiagram
     participant Client as 客户端
     participant L as Leader (Node A)
     participant T as Target (Node B)
-    peer P3 as Peer C
+    participant P3 as Peer C
 
     Client->>L: transfer_leadership_to(B)
 
