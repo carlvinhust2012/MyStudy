@@ -191,8 +191,8 @@ stateDiagram-v2
     DMA_DONE --> POSTED: bio_iod_post()
     POSTED --> [*]: 缓冲区释放
 
-    note right of PREPARED: FETCH: 立即dma_rw读NVMe
-    note right of POSTED: UPDATE: dma_rw写NVMe
+    note right of PREPARED: FETCH模式立即dma_rw读NVMe
+    note right of POSTED: UPDATE模式dma_rw写NVMe
 ```
 
 ---
@@ -496,7 +496,7 @@ graph TB
         IM_FT[In-Memory Free Tree<br/>vsi_free_btr<br/>SCM树的内存镜像]
         HEAP[Max-Heap<br/>vfc_heap<br/>大块空闲（>64MB）]
         SIZE_BT[Sized Tree<br/>vfc_size_btr<br/>小块最佳适配]
-        BIT_LRU[Bitmap LRU<br/>vfc_bitmap_lru[64]<br/>按类别组织]
+        BIT_LRU[Bitmap LRU<br/>vfc_bitmap_lru x 64<br/>按类别组织]
     end
 
     subgraph "Tier 3: 老化缓冲区（延迟10秒可见）"
@@ -1009,7 +1009,7 @@ rw_completion(err != 0):
 ## 15. 参数配置
 
 | 参数 | 默认值 | 说明 |
-|---|---|
+|------|--------|------|
 | `VOS_BLK_SZ` | 4KB | 块大小（`VOS_BLK_SHIFT = 12`） |
 | `BIO_DMA_CHUNK_MB` | 8MB | DMA Chunk 大小 |
 | `BIO_DMA_PAGE_SZ` | 4KB | DMA 页大小 |
