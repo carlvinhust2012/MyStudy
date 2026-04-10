@@ -10,7 +10,7 @@
 6. [Facility 子系统划分](#6-facility-子系统划分)
 7. [Debug Bit 与 Group](#7-debug-bit-与-group)
 8. [Mask 缓存机制](#8-mask-缓存机制)
-9. `d_log_check()` 内联过滤](#9-d_log_check-内联过滤)
+9. [`d_log_check()` 内联过滤](#9-d_log_check-内联过滤)
 10. [`d_vlog()` 核心输出](#10-d_vlog-核心输出)
 11. [日志初始化流程](#11-日志初始化流程)
 12. [日志输出流程](#12-日志输出流程)
