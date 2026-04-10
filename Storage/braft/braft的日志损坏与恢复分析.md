@@ -304,7 +304,7 @@ sequenceDiagram
 
     SLS->>S: load(Open Segment)
     S->>S: 扫描 entry@2001 ✓
-    S->->S: 扫描 entry@2002 ✓
+    S->>S: 扫描 entry@2002 ✓
     S->>S: 扫描 entry@2003 ✗ (checksum 失败!)
     S->>S: is_entry_corrupted = true
 
