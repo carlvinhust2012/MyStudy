@@ -377,10 +377,10 @@ sequenceDiagram
     participant VOS as VOS Engine
     participant IO as vos_update_begin
     participant Pool as vos_pool
-    member Obj as vos_object(cache)
-    member Tree as Btree(dkey/akey)
-    member SCM as PMDK(SCM)
-    member NVMe as VEA(NVMe)
+    participant Obj as vos_object(cache)
+    participant Tree as Btree(dkey/akey)
+    participant SCM as PMDK(SCM)
+    participant NVMe as VEA(NVMe)
 
     C->>DAOS: daos_obj_update(dkey, akey, value, epoch)
 
@@ -443,11 +443,11 @@ sequenceDiagram
     participant VOS as VOS Engine
     participant IO as vos_fetch_begin
     participant Pool as vos_pool
-    member Obj as vos_object(cache)
-    member Tree as Btree(dkey/akey)
-    member ILOG as ILOG
-    member SCM as PMDK(SCM)
-    member NVMe as SPDK(NVMe)
+    participant Obj as vos_object(cache)
+    participant Tree as Btree(dkey/akey)
+    participant ILOG as ILOG
+    participant SCM as PMDK(SCM)
+    participant NVMe as SPDK(NVMe)
 
     C->>DAOS: daos_obj_fetch(dkey, akey, epoch)
 
