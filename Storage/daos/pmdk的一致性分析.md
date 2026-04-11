@@ -1,1114 +1,914 @@
-# PMDK 数据一致性保证分析
+# PMDK 线程模型分析
 
 ## 目录
 
 1. [概述](#1-概述)
-2. [一致性保证架构总览](#2-一致性保证架构总览)
-3. [Undo Log 一致性机制](#3-undo-log-一致性机制)
-4. [Redo Log 一致性机制](#4-redo-log-一致性机制)
-5. [事务提交原子性](#5-事务提交原子性)
-6. [事务中止与回滚](#6-事务中止与回滚)
-7. [gen_num 代数追踪机制](#7-gen_num-代数追踪机制)
-8. [Checksum 校验体系](#8-checksum-校验体系)
-9. [内存排序保证](#9-内存排序保证)
-10. [崩溃恢复流程](#10-崩溃恢复流程)
-11. [崩溃点分析：对象分配](#11-崩溃点分析对象分配)
-12. [崩溃点分析：事务提交](#12-崩溃点分析事务提交)
-13. [崩溃点分析：事务中止](#13-崩溃点分析事务中止)
-14. [Range 追踪与重叠处理](#14-range-追踪与重叠处理)
-15. [事务状态机](#15-事务状态机)
-16. [Pool 一致性检查](#16-pool-一致性检查)
-17. [多副本一致性](#17-多副本一致性)
-18. [与 DAOS 一致性的对比](#18-与-daos-一致性的对比)
-19. [对比总结](#19-对比总结)
-20. [源码索引](#20-源码索引)
+2. [锁层次结构总览](#2-锁层次结构总览)
+3. [Lane 并发机制](#3-lane-并发机制)
+4. [Lane 分配时序](#4-lane-分配时序)
+5. [Arena 分片模型](#5-arena-分片模型)
+6. [Bucket 与 Run 锁](#6-bucket-与-run-锁)
+7. [PMEM 持久化锁](#7-pmem-持久化锁)
+8. [锁与事务的集成](#8-锁与事务的集成)
+9. [Critnib 并发数据结构](#9-critnib-并发数据结构)
+10. [Pool 级别同步](#10-pool-级别同步)
+11. [多副本复制线程模型](#11-多副本复制线程模型)
+12. [线程生命周期管理](#12-线程生命周期管理)
+13. [并发分配完整时序](#13-并发分配完整时序)
+14. [并发事务完整时序](#14-并发事务完整时序)
+15. [libpmem2 线程安全模型](#15-libpmem2-线程安全模型)
+16. [对比总结](#16-对比总结)
+17. [源码索引](#17-源码索引)
 
 ---
 
 ## 1. 概述
 
-PMDK 通过**双日志（Undo + Redo）架构**在应用层实现崩溃一致性，不依赖操作系统文件系统日志。核心一致性保证分为四个层次：
+PMDK 的线程模型围绕 **Lane（事务并发）** 和 **Arena（分配并发）** 两大分片机制构建，通过多级锁层次实现高并发：
 
-| 层次 | 机制 | 保护对象 | 崩溃恢复行为 |
+| 机制 | 并发维度 | 最大并行度 | 锁类型 |
 |---|---|---|---|
-| L1: 持久化原语 | clwb/clflushopt + sfence | 单次写入 | 确保写入到达持久内存 |
-| L2: Checksum | Fletcher64 + gen_num | 日志条目 | 检测部分写入/损坏 |
-| L3: Undo Log | 修改前快照 | 应用数据 | 回滚未完成事务 |
-| L4: Redo Log | 意图日志 | 分配器元数据 | 恢复分配器一致性 |
+| Lane | 事务/分配操作 | 1024 | CAS（uint64） |
+| Arena | 堆分配 | CPU 核数 | os_mutex（全局 arena 锁） |
+| Bucket | 分配类内竞争 | Arena × Class | os_mutex |
+| Run Lock | Chunk 位图修改 | 65528（hash） | os_mutex |
+| PMEM Lock | 用户数据保护 | 嵌入对象中 | os_mutex/rwlock/cond |
+| Pool Mutex | Pool 生命周期 | 1（全局） | os_mutex |
+
+核心设计原则：
+
+- **Lane 隔离事务**：每个事务独占 Lane，redo/undo log 互不干扰
+- **Arena 分片分配**：按 CPU 核数分片，每线程绑定一个 Arena，减少 bucket 竞争
+- **CAS 优先**：Lane 锁和 Arena 初始化使用 CAS，减少锁开销
+- **锁排序防死锁**：arenas.lock → bucket → run_lock → memory_block，严格顺序
 
 ---
 
-## 2. 一致性保证架构总览
+## 2. 锁层次结构总览
 
 ```mermaid
 graph TB
-    subgraph "应用层"
-        APP[应用代码<br/>直接写入 mmap 内存]
+    subgraph "Level 6: 全局锁"
+        PM["pools_mutex<br/>Pool open/close/create<br/>1 个全局锁"]
     end
 
-    subgraph "事务层"
-        TX[Transaction Engine]
-        UNDO[Undo Log<br/>修改前快照<br/>2048B/lane]
-        REDO_I[Internal Redo<br/>分配器 bitmap<br/>192B/lane]
-        REDO_E[External Redo<br/>大型操作<br/>640B/lane]
-        RANGE[Range Tree<br/>RAVL 追踪修改区域]
+    subgraph "Level 5: Arena 管理"
+        AL["arenas.lock<br/>Arena 创建/线程分配<br/>1 个/Pool"]
     end
 
-    subgraph "持久化层"
-        FLUSH[pmem_flush<br/>clwb/clflushopt]
-        DRAIN[pmem_drain<br/>sfence]
+    subgraph "Level 4: Bucket 锁"
+        B1["Arena 0<br/>bucket[0] bucket[1] ... bucket[254]"]
+        B2["Arena 1<br/>bucket[0] bucket[1] ... bucket[254]"]
+        BN["Arena N<br/>bucket[0] bucket[1] ... bucket[254]"]
+        DB["default_bucket<br/>大块分配<br/>1 个全局"]
     end
 
-    subgraph "校验层"
-        CS_ENTRY[Entry Checksum<br/>Fletcher64 + gen_num]
-        CS_HDR[Header Checksum<br/>覆盖整个 ulog]
-        CS_POOL[Pool Checksum<br/>覆盖 descriptor]
-        GNUM[gen_num<br/>代数计数器]
+    subgraph "Level 3: Run 锁"
+        RL1["run_locks[chunk_id % nlocks]<br/>最多 65528 个<br/>hash 分散"]
     end
 
-    APP -->|tx_add| TX
-    TX -->|快照旧数据| UNDO
-    TX -->|追踪修改| RANGE
-    TX -->|tx_commit| FLUSH
-    FLUSH --> DRAIN
+    subgraph "Level 2: Lane 锁"
+        LL["lane_locks[0..1023]<br/>CAS: 0→1 acquire<br/>1→0 release"]
+    end
 
-    UNDO --> CS_ENTRY
-    CS_ENTRY --> GNUM
-    REDO_I --> CS_HDR
-    REDO_E --> CS_HDR
+    subgraph "Level 1: 用户锁"
+        PL["PMEMmutex / PMEMrwlock / PMEMcond<br/>嵌入用户对象中<br/>runid 懒初始化"]
+    end
+
+    PM --> AL
+    AL --> B1
+    AL --> B2
+    AL --> BN
+    B1 --> RL1
+    B2 --> RL1
+    DB --> RL1
+    RL1 --> LL
+    PL -.->|"集成事务"| LL
 ```
 
 ---
 
-## 3. Undo Log 一致性机制
+## 3. Lane 并发机制
 
-### 3.1 Undo Log 结构
+### 3.1 Lane 布局
 
-```c
-// src/libpmemobj/ulog.h
-struct ULOG(capacity) {
-    uint64_t checksum;     // 头部校验和
-    uint64_t next;         // 扩展 ulog 链接
-    uint64_t capacity;     // 容量
-    uint64_t gen_num;      // 代数计数器（关键一致性字段）
-    uint64_t flags;
-    uint64_t unused[2];    // 必须为 0
-    uint8_t  data[capacity]; // 条目数据
-};
-```
-
-### 3.2 Undo 条目格式
+每条 Lane 在持久内存中占 3072 字节，包含三个日志区域：
 
 ```
-值条目 (16B) — 用于 SET/AND/OR:
-┌────────────────────────────────┬──────────────────┐
-│ offset + type (8B)             │ value (8B)       │
-│ bit[63:61] = 操作类型          │ 操作数值          │
-└────────────────────────────────┴──────────────────┘
-
-缓冲区条目 (可变) — 用于 BUF_CPY/BUF_SET:
-┌──────────────────────────────────────────────────────┐
-│ base: offset+type (8B)                               │
-│ checksum (8B) — 覆盖整个条目 + gen_num               │
-│ size (8B)                                            │
-│ data[size] — 保存的原始数据                           │
-└──────────────────────────────────────────────────────┘
+Lane Layout (3072B)
+├── Internal Redo (192B)  — 分配器 bitmap 操作
+├── External Redo (640B)  — 大型分配操作（可扩展）
+└── Undo Log     (2048B)  — 事务快照（可扩展）
 ```
 
-### 3.3 Undo 快照操作时序
+默认 Lane 数量由 Pool 大小决定（最大 1024）。
+
+### 3.2 Lane 获取策略
 
 ```mermaid
 sequenceDiagram
-    participant APP as 应用
-    participant TX as pmemobj_tx_add
-    participant RANGE as Range Tree
-    participant UNDO as Undo Log
-    participant PMEM as 持久内存
+    participant T as 线程
+    participant CACHE as 线程本地缓存
+    participant HT as critnib 哈希表
+    participant COUNTER as 全局计数器
+    participant LOCKS as lane_locks[1024]
 
-    APP->>TX: tx_add(obj, offset=100, len=256)
+    T->>CACHE: lane_hold(pop)
+    CACHE->>CACHE: 检查 Lane_info_cache
 
-    TX->>RANGE: 查找 [100, 356) 是否已有快照
-
-    alt 首次快照此区域
-        TX->>UNDO: 创建 ulog_entry_buf
-        TX->>PMEM: memcpy(entry->data, obj+100, 256)
-        Note over PMEM: 拷贝原始数据到 undo log
-
-        TX->>UNDO: entry->base.offset = 100 | BUF_CPY
-        TX->>UNDO: entry->size = 256
-
-        TX->>UNDO: 计算 checksum
-        Note over UNDO: csum = fletcher64(entry)<br/>csum = fletcher64_seq(gen_num, csum)
-        TX->>UNDO: entry->checksum = csum
-
-        TX->>UNDO: 零化下一个条目的 offset<br/>（终止标记）
-        TX->>PMEM: 持久化写入条目
-
-        TX->>RANGE: ravl_insert([100, 356))
-    else 已有重叠快照
-        TX->>TX: 仅对非重叠部分追加条目
-        TX->>RANGE: 扩展现有 range
-    end
-```
-
-### 3.4 Undo Log 条目写入的原子性保证
-
-```mermaid
-sequenceDiagram
-    participant CREATE as ulog_entry_buf_create
-    participant STACK as 栈缓冲区
-    participant PMEM as 持久内存
-
-    Note over CREATE,PMEM: 1. 在栈上准备完整条目
-
-    CREATE->>STACK: 拷贝数据到栈缓冲区
-    CREATE->>STACK: 填充 base, size
-    CREATE->>STACK: 计算 checksum（含 gen_num）
-
-    Note over CREATE,PMEM: 2. 分三阶段写入持久内存
-
-    Note over CREATE,PMEM: 阶段 A: 写中间对齐缓存行（如果有）
-    CREATE->>PMEM: 写入完整缓存行
-
-    Note over CREATE,PMEM: 阶段 B: 写最后部分缓存行（零填充）
-    CREATE->>PMEM: 写入最后缓存行
-
-    Note over CREATE,PMEM: 阶段 C: 写第一个缓存行（metadata + checksum）
-    CREATE->>PMEM: 非临时写入第一个缓存行
-    CREATE->>PMEM: drain（sfence）
-
-    Note over PMEM: 关键：第一个缓存行最后写入<br/>确保 checksum 可见时数据已就位
-```
-
-**为什么第一个缓存行最后写**：如果 crash 发生在写入中间，`entry->offset` 为 0（未写入第一个缓存行），恢复时跳过。如果第一个缓存行已写入（checksum 可见），中间和末尾数据必然已就位。
-
----
-
-## 4. Redo Log 一致性机制
-
-### 4.1 双 Redo Log 分工
-
-| Redo Log | 大小 | 保护内容 | 条目类型 |
-|---|---|---|---|
-| Internal Redo | 192B | 分配器 bitmap 位翻转 | SET/AND/OR（8字节/条目） |
-| External Redo | 640B（可扩展） | chunk 头部、指针更新 | SET/AND/OR + 扩展条目 |
-
-### 4.2 分配器 Redo 操作
-
-```c
-// 分配器使用 redo log 记录三种原子操作：
-ULOG_OPERATION_OR   → bitmap[idx] |= value   // 标记块已分配
-ULOG_OPERATION_AND  → bitmap[idx] &= value   // 标记块已释放
-ULOG_OPERATION_SET  → ptr = value            // 更新 chunk 头部/指针
-```
-
-### 4.3 Redo 发布流程
-
-```mermaid
-sequenceDiagram
-    participant TX as palloc_publish
-    participant ACT as Action 排序
-    participant LOCK as Per-Action 锁
-    participant REDO as External Redo
-    participant HEAP as Heap 持久化
-    participant PMEM as 持久内存
-
-    TX->>ACT: 按 lock 地址排序 actions<br/>（防止死锁）
-
-    loop 对每个 action
-        TX->>LOCK: 获取 action 锁
-        TX->>REDO: 写入 redo 条目<br/>（bitmap OR/AND, SET）
+    alt 首次访问此 Pool
+        CACHE->>HT: 查找/创建 lane_info
+        HT->>COUNTER: atomic fetch-and-add<br/>next_lane_idx += LANE_JUMP(8)
+        COUNTER-->>HT: primary = 128, 136, 144...
+        Note over COUNTER: 间隔 8 避免同一缓存行<br/>上的 false sharing
     end
 
-    TX->>PMEM: drain（sfence）
-
-    Note over TX,PMEM: 原子处理 redo log
-
-    TX->>HEAP: operation_process(redo)
-    loop 对每个 redo 条目
-        HEAP->>PMEM: ulog_entry_apply()<br/>应用 bitmap/ptr 修改到实际位置
-    end
-    TX->>PMEM: drain
-
-    Note over HEAP: 运行时更新 heap 统计
-
-    loop 对每个 action
-        TX->>LOCK: 释放 action 锁
-    end
-
-    TX->>REDO: operation_finish()<br/>清零 redo log
-```
-
-### 4.4 单条目优化
-
-当 redo log 仅含一个 8 字节值操作时（`SET`/`AND`/`OR`），PMDK 跳过完整的 redo log 流程：
-
-```c
-// memops.c:778
-if (redo_process && ctx->pshadow_ops.offset == sizeof(struct ulog_entry_val)) {
-    ulog_entry_apply(e, 1, ctx->p_ops);  // 直接写入 8 字节
-    redo_process = 0;  // 跳过 redo log
-}
-```
-
-**原理**：x86 架构上，对齐的 8 字节写入是原子的（Single-Instruction Atomicity），无需 redo log 保护。
-
----
-
-## 5. 事务提交原子性
-
-### 5.1 提交流程的两阶段协议
-
-```mermaid
-sequenceDiagram
-    participant APP as 应用
-    participant TX as tx_pre_commit
-    participant UNDO as Undo Log
-    participant REDO as Redo Log
-    participant HEAP as Heap
-    participant PMEM as 持久内存
-
-    APP->>TX: TX_COMMIT()
-
-    Note over TX,PMEM: Phase 1: 刷新用户数据（Undo 仍有效）
-
-    TX->>TX: 遍历 Range Tree 所有修改区域
-    loop 对每个 range
-        TX->>PMEM: pmemops_xflush(ptr, size)
-        Note over PMEM: clwb 逐缓存行刷新
-    end
-    TX->>TX: 销毁 Range Tree
-
-    TX->>PMEM: pmemops_drain() → sfence
-    Note over PMEM: 此时所有用户数据已持久化<br/>但 Undo Log 仍有效（安全网）
-
-    Note over TX,PMEM: Phase 2: 发布分配器变更（使 Undo 失效）
-
-    TX->>REDO: operation_start(external_redo)
-    TX->>HEAP: palloc_publish()<br/>通过 redo log 处理所有分配/释放
-
-    Note over HEAP: redo 处理中包含<br/>gen_num++ 操作<br/>提交后 Undo Log 的 checksum 自动失效
-
-    TX->>TX: tx_post_commit()
-    TX->>UNDO: operation_finish(undo)<br/>清零 undo log 数据
-    TX->>UNDO: 释放扩展 ulog
-
-    Note over PMEM: 提交完成<br/>用户数据 + 分配器状态均持久化
-```
-
-### 5.2 提交原子性的关键不变量
-
-```
-提交过程中的不变量：
-
-1. Undo Log 始终有效 → 直到 gen_num 被 redo 递增
-2. 用户数据先于分配器元数据持久化
-3. gen_num 递增使 Undo Log 失效（无需显式清零）
-4. 任何时刻崩溃，要么：
-   - Undo Log 有效 → 回滚（gen_num 未变）
-   - Undo Log 失效 → 已提交（gen_num 已递增）
-```
-
-### 5.3 Phase 1 与 Phase 2 的分离意义
-
-```
-Phase 1 (flush + drain) 失败 → Undo 恢复旧数据
-Phase 2 (palloc_publish) 失败 → Undo 仍有效，恢复旧数据
-                               但用户数据已持久化（幂等恢复：覆盖已持久化的正确数据）
-Phase 2 完成 → gen_num++ 使 Undo 失效，不可回滚
-```
-
----
-
-## 6. 事务中止与回滚
-
-```mermaid
-sequenceDiagram
-    participant APP as 应用
-    participant TX as tx_abort
-    participant UNDO as Undo Log
-    participant HEAP as Heap
-    participant PMEM as 持久内存
-
-    APP->>TX: TX_ABORT()
-
-    Note over TX,PMEM: Step 1: 回放 Undo Log 恢复数据
-
-    TX->>UNDO: tx_abort_set()
-    loop 对每个 undo 条目
-        UNDO->>PMEM: tx_restore_range()<br/>memcpy(原始位置, entry->data, entry->size)
-        Note over PMEM: 从 undo 快照恢复原始数据
-    end
-
-    Note over TX,PMEM: Step 2: 使 Undo Log 失效
-
-    TX->>UNDO: operation_finish(ULOG_INC_FIRST_GEN_NUM)
-    UNDO->>PMEM: gen_num++ + clwb + sfence
-    Note over PMEM: 递增 gen_num，持久化<br/>所有旧条目的 checksum 自动失效
-
-    UNDO->>UNDO: 释放所有扩展 ulog (ULOG_FREE_AFTER_FIRST)
-
-    Note over TX,PMEM: Step 3: 取消分配预留
-
-    TX->>HEAP: palloc_cancel()
-    loop 对每个 action
-        HEAP->>HEAP: palloc_heap_action_on_cancel()
-        Note over HEAP: 标记块无效 + 恢复 free 状态
-        HEAP->>HEAP: palloc_reservation_clear()
-    end
-```
-
-**中止的幂等性**：如果在 `tx_abort_set` 中途崩溃，恢复时 undo log 仍会再次回放。`BUF_CPY` 操作是幂等的（写入相同数据），因此多次回放不会导致不一致。
-
----
-
-## 7. gen_num 代数追踪机制
-
-### 7.1 gen_num 的核心作用
-
-```
-gen_num 是 Undo Log 和 Redo Log 之间的一致性桥梁：
-
-事务开始 → 第一次 snapshot 时创建 redo action: gen_num++
-
-成功提交 → palloc_publish 处理 redo → gen_num 实际递增
-                                              ↓
-                                    Undo 条目的 checksum 基于 old gen_num
-                                              ↓
-                                    checksum 不匹配 → 条目被视为无效
-                                              ↓
-                                    Undo Log 自动失效（无需显式清零）
-
-中止回滚 → redo 不处理 → gen_num 不变 → Undo 条目仍有效
-                                      ↓
-                            operation_finish 直接递增 gen_num
-                                      ↓
-                            Undo Log 失效（安全清理）
-```
-
-### 7.2 gen_num 与 Checksum 的绑定
-
-```mermaid
-sequenceDiagram
-    participant SNAPSHOT as tx_add_snapshot
-    participant UNDO as Undo Log
-    participant ENTRY as ulog_entry_buf
-    participant COMMIT as palloc_publish
-    participant RECOVER as 恢复时
-
-    Note over SNAPSHOT,UNDO: 创建快照时
-
-    SNAPSHOT->>ENTRY: 保存原始数据
-    SNAPSHOT->>ENTRY: 计算 checksum
-    Note over ENTRY: csum = fletcher64(entry_data + gen_num=5)
-
-    Note over SNAPSHOT,UNDO: 提交时
-
-    COMMIT->>UNDO: gen_num: 5 → 6 (通过 redo log)
-
-    Note over RECOVER: 恢复时
-
-    RECOVER->>ENTRY: 验证 checksum
-    Note over ENTRY: 实际 csum = fletcher64(entry_data + gen_num=6)
-    Note over ENTRY: 存储的 csum 基于 gen_num=5
-    Note over ENTRY: 5 ≠ 6 → checksum 不匹配
-    RECOVER->>RECOVER: 条目无效 → 跳过
-```
-
-### 7.3 gen_num 操作时机
-
-| 场景 | gen_num 操作 | 方式 | 持久化 |
-|---|---|---|---|
-| 首次 snapshot | 创建 redo action（延迟） | palloc_set_value | 是（通过 redo） |
-| 提交成功 | redo 处理时递增 | ulog 处理 | 是 |
-| 中止回滚 | 直接递增 | ulog_inc_gen_num | 是（clwb+sfence） |
-| 崩溃恢复 | 直接递增 | ulog_inc_gen_num | 是 |
-| 中止时扩展 ulog | 递增（但不持久化） | ulog_inc_gen_num(NULL) | 否 |
-
----
-
-## 8. Checksum 校验体系
-
-### 8.1 三级 Checksum 层次
-
-```
-┌─────────────────────────────────────────────────┐
-│ Level 1: Pool Checksum                          │
-│   覆盖: 整个 pool descriptor                    │
-│   验证: 每次 pool open                          │
-│   用途: 检测 pool 元数据损坏                     │
-├─────────────────────────────────────────────────┤
-│ Level 2: ULOG Header Checksum                   │
-│   覆盖: ulog header + base_nbytes 数据          │
-│   算法: Fletcher64                              │
-│   用途: 判断 redo/undo log 是否需要恢复          │
-├─────────────────────────────────────────────────┤
-│ Level 3: Entry Checksum (仅 BUF_CPY/BUF_SET)   │
-│   覆盖: 整个条目数据 + ulog.gen_num             │
-│   算法: Fletcher64 + fletcher64_seq             │
-│   用途: 检测部分写入/区分有效/无效条目           │
-└─────────────────────────────────────────────────┘
-```
-
-### 8.2 Fletcher64 算法
-
-```c
-// src/core/util.c:134
-// 双 32 位累加器
-uint64_t fletcher64(const void *data, size_t len) {
-    lo32 = 0, hi32 = 0;
-    for (each uint32_t word in data) {
-        lo32 += le32toh(word);
-        hi32 += lo32;
-    }
-    return (uint64_t)hi32 << 32 | lo32;
-}
-```
-
-### 8.3 Checksum 判定逻辑
-
-```mermaid
-graph TD
-    ENTRY[读取 ulog 条目] --> Z0{offset == 0?}
-    Z0 -->|是| EMPTY[空条目 - 停止迭代]
-    Z0 -->|否| TYPE{条目类型}
-
-    TYPE -->|SET/AND/OR| VALID_8B[有效 - 值条目无独立 checksum]
-    TYPE -->|BUF_CPY/BUF_SET| CS{计算 entry checksum}
-
-    CS --> MATCH{checksum 匹配?<br/>含 gen_num}
-    MATCH -->|是| VALID_BUF[有效条目]
-    MATCH -->|否| INVALID[无效条目 - 停止迭代<br/>可能为部分写入/崩溃残留]
-
-    VALID_8B --> APPLY[应用条目]
-    VALID_BUF --> APPLY
-```
-
-### 8.4 扩展 Ulog 的 Checksum 策略
-
-```
-Base ULOG (预分配在 Lane 中):
-  ├── Header checksum 覆盖: header + base_nbytes 数据
-  └── 扩展链接: next → Extension ULOG
-
-Extension ULOG (动态分配):
-  ├── Header checksum: 仅覆盖 header 本身
-  ├── 数据区域: 不被 base checksum 覆盖
-  └── 条目级 checksum: 每个条目独立验证
-
-设计原因: 扩展 ulog 的 base_nbytes = 0，
-         其有效性完全依赖条目级 checksum。
-```
-
----
-
-## 9. 内存排序保证
-
-### 9.1 Store Ordering 跨掉电
-
-```mermaid
-sequenceDiagram
-    participant CPU as CPU
-    participant L1 as L1 Cache
-    participant L2 as L2 Cache
-    participant PMEM as 持久内存
-
-    Note over CPU,PMEM: 正常写入流程
-
-    CPU->>L1: store addr=data1
-    CPU->>L1: store addr=data2
-    Note over L1: 数据在 CPU 缓存中（易失性）
-
-    CPU->>L1: clwb(addr)
-    L1->>PMEM: data1/data2 刷新到持久内存
-    Note over L1: clwb 发出但尚未完成
-
-    CPU->>CPU: sfence
-    Note over CPU: sfence 阻塞直到 clwb 完成
-
-    Note over PMEM: 此后掉电安全<br/>data1 和 data2 都已持久化
-```
-
-### 9.2 clwb vs clflushopt vs clflush
-
-| 指令 | 行为 | 是否需要 sfence | 性能 |
-|---|---|---|---|
-| `clwb` | 写回缓存行，**不失效** | 是 | 最优（保留缓存副本） |
-| `clflushopt` | 写回并失效缓存行 | 是 | 次优（后续访问需重新加载） |
-| `clflush` | 写回并失效，**串行化** | 否（自带） | 最差（阻塞后续指令） |
-
-### 9.3 事务提交中的排序保证
-
-```
-tx_pre_commit():
-    flush(range1)  →  clwb × N
-    flush(range2)  →  clwb × N
-    ...
-    drain()        →  sfence     ← 之前所有 clwb 完成后才继续
-
-palloc_publish():
-    redo_entry_apply(bitmap) → 直接内存写入
-    ...
-    drain()                    ← redo 修改也持久化
-```
-
----
-
-## 10. 崩溃恢复流程
-
-### 10.1 恢复总时序
-
-```mermaid
-sequenceDiagram
-    participant OPEN as pmemobj_open
-    participant CHK as 一致性检查
-    participant LANE as Lane 系统
-    participant REDO as 所有 Redo Log
-    participant HEAP as Heap 分配器
-    participant UNDO as 所有 Undo Log
-    participant PMEM as 持久内存
-
-    OPEN->>CHK: obj_pool_open()
-    CHK->>CHK: 验证 header signature + checksum
-    CHK->>CHK: obj_descr_check() 验证 descriptor
-
-    OPEN->>CHK: obj_check_basic()
-    CHK->>CHK: 检查 run_id (奇数 = 上次崩溃)
-    CHK->>CHK: lane_check() 检查 redo log
-    CHK->>CHK: heap_check() 检查 heap header
-
-    OPEN->>LANE: lane_boot()
-    Note over LANE: 分配运行时 lane 结构
-
-    OPEN->>LANE: lane_recover_and_section_boot()
-
-    Note over LANE,PMEM: Phase 1: 恢复 Redo Log（所有 Lane）
-
-    loop 对所有 1024 条 Lane
-        LANE->>REDO: ulog_recover(internal_redo)
-        REDO->>RED0: ulog_recovery_needed()<br/>检查 base_nbytes > 0 && checksum 有效
-        alt 需要恢复
-            REDO->>PMEM: ulog_process() 回放条目<br/>恢复 bitmap/ptr 修改
-            REDO->>PMEM: ulog_clobber() 清零 header
+    alt nest_count > 0 (嵌套)
+        Note over T: 直接使用当前 lane
+    else 重新获取 lane
+        T->>LOCKS: CAS(locks[primary], 0, 1)
+        alt 获取成功
+            Note over T: 使用 primary lane
+        else primary 竞争
+            loop 最多 128 次
+                T->>LOCKS: CAS(locks[primary], 0, 1)
+            end
+            Note over T: 切换 primary
+            T->>LOCKS: 扫描全局空闲 lane
         end
-        LANE->>REDO: ulog_recover(external_redo)
     end
 
-    Note over LANE,PMEM: Phase 2: 启动分配器
+    T->>T: 初始化 operation_context<br/>internal / external / undo
 
-    LANE->>HEAP: pmalloc_boot(pop)
-    Note over HEAP: 构建运行时数据结构<br/>基于已恢复的持久化 heap
-
-    Note over LANE,PMEM: Phase 3: 恢复 Undo Log（所有 Lane）
-
-    loop 对所有 1024 条 Lane
-        LANE->>UNDO: operation_resume()
-        Note over UNDO: 加载现有 undo 状态
-        LANE->>UNDO: operation_process()
-        UNDO->>PMEM: ulog_process() 回放 undo 条目<br/>恢复 pre-tx 原始数据
-        LANE->>UNDO: operation_finish(<br/>ULOG_INC_FIRST_GEN_NUM |<br/>ULOG_FREE_AFTER_FIRST)
-        Note over UNDO: gen_num++ + 释放扩展 ulog
-    end
-
-    OPEN-->>OPEN: Pool 就绪
+    T-->>T: 返回 lane_idx
 ```
 
-### 10.2 Redo 先于 Undo 的严格顺序
+### 3.3 Lane 分配参数
+
+| 参数 | 值 | 说明 |
+|---|---|---|
+| `LANE_JUMP` | 8 | 新线程间隔（64B/sizeof(uint64)），防 false sharing |
+| `LANE_PRIMARY_ATTEMPTS` | 128 | primary lane 最大重试次数 |
+| `LANE_TOTAL_SIZE` | 3072B | 每条 Lane 大小 |
+| `OBJ_NLANES` | 1024 | Lane 数量上限 |
+
+### 3.4 Lane 并发隔离
 
 ```
-为什么必须是 Redo → Boot → Undo？
+线程 A: Lane 0  ──→  redo(0) + undo(0)  ──→  独立日志空间
+线程 B: Lane 8  ──→  redo(8) + undo(8)  ──→  独立日志空间
+线程 C: Lane 16 ──→  redo(16) + undo(16) ──→  独立日志空间
 
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Redo 恢复    │     │  Heap 启动    │     │  Undo 恢复    │
-│              │     │              │     │              │
-│ 恢复分配器    │ ──→ │ 基于一致的    │ ──→ │ 可能需要释放   │
-│ bitmap 状态   │     │ bitmap 构建   │     │ 扩展 ulog    │
-│              │     │ 运行时结构     │     │              │
-│ 使 heap      │     │              │     │ 释放需要      │
-│ 元数据一致    │     │              │     │ 功能正常的    │
-│              │     │              │     │ 分配器        │
-└──────────────┘     └──────────────┘     └──────────────┘
-
-如果 Undo 先恢复：undo 可能需要释放扩展 ulog 的内存块，
-但此时分配器 bitmap 尚未恢复，释放操作会导致 heap 不一致。
+无共享日志 → 无锁并发 → 完全隔离
 ```
 
 ---
 
-## 11. 崩溃点分析：对象分配
+## 4. Lane 分配时序
 
-```mermaid
-sequenceDiagram
-    participant APP as pmemobj_alloc
-    participant RESV as palloc (reserve)
-    participant REDO as Redo Log
-    participant HEAP as Heap 持久化
-    participant PMEM as 持久内存
-
-    Note over APP,PMEM: 正常路径
-
-    APP->>RESV: palloc_reserve(size)
-    RESV-->>APP: 返回块偏移（内存中预留）
-
-    APP->>PMEM: 写入对象数据（内存映射）
-
-    APP->>REDO: palloc_publish()
-    REDO->>REDO: 写入 bitmap 修改条目
-    REDO->>HEAP: operation_process()
-    REDO->>PMEM: drain
-    REDO->>REDO: ulog_clobber()
-
-    Note over APP,PMEM: 崩溃点分析
-
-    rect rgb(255, 200, 200)
-        Note over APP,PMEM: 崩溃点 A: reserve 之后，publish 之前
-        Note right of RESV: 恢复结果: bitmap 未修改<br/>块仍为空闲状态<br/>无可见效果
-    end
-
-    rect rgb(255, 230, 200)
-        Note over APP,PMEM: 崩溃点 B: redo 条目部分写入
-        Note right of REDO: 恢复结果: checksum 不匹配<br/>redo 不回放<br/>块仍为空闲状态
-    end
-
-    rect rgb(200, 255, 200)
-        Note over APP,PMEM: 崩溃点 C: redo 处理完成，drain 之前
-        Note right of HEAP: 恢复结果: bitmap 已修改<br/>但可能未持久化<br/>redo 仍有效，再次回放（幂等）
-    end
-
-    rect rgb(200, 200, 255)
-        Note over APP,PMEM: 崩溃点 D: drain 之后，clobber 之前
-        Note right of REDO: 恢复结果: bitmap 已持久化<br/>redo 仍有效 → 再次回放<br/>幂等，无副作用
-    end
-```
-
----
-
-## 12. 崩溃点分析：事务提交
-
-### 12.1 提交六个崩溃点
-
-```
-时间轴:
-                    │       │          │           │              │            │
-TX_COMMIT()         │       │          │           │              │            │
-  ├─ tx_pre_commit()│       │          │           │              │            │
-  │   flush ranges  │       │          │           │              │            │
-  │   destroy tree  │       │          │           │              │            │
-  ├─ drain()        │       │          │           │              │            │
-  ├─ operation_start│       │          │           │              │            │
-  ├─ palloc_publish │       │          │           │              │            │
-  │   ├─ redo_apply │       │          │           │              │            │
-  │   └─ drain      │       │          │           │              │            │
-  ├─ tx_post_commit │       │          │           │              │            │
-  └─ lane_release   │       │          │           │              │            │
-                    │       │          │           │              │            │
-崩溃点:             CP1     CP2        CP3         CP4            CP5          CP6
-```
-
-### 12.2 各崩溃点恢复结果
-
-| 崩溃点 | 位置 | 用户数据 | 分配器 | Undo Log | gen_num | 恢复结果 |
-|---|---|---|---|---|---|---|
-| CP1 | pre_commit 之前 | 可能部分修改 | 未变更 | 有效 | 旧值 | **回滚**：undo 恢复旧数据 |
-| CP2 | flush 后、drain 前 | 在 CPU 缓存中 | 未变更 | 有效 | 旧值 | **回滚**：undo 恢复（幂等覆盖已缓存数据） |
-| CP3 | drain 后、publish 前 | **已持久化** | 未变更 | 有效 | 旧值 | **回滚**：undo 覆盖已持久化数据（幂等） |
-| CP4 | publish 中 | 已持久化 | 部分变更 | 有效 | 旧值 | **回滚**：redo 不完整则不回放 |
-| CP5 | publish 后、post_commit 前 | 已持久化 | 已变更 | 有效 | **新值** | **已提交**：undo 失效（gen_num 已变），条目被跳过 |
-| CP6 | post_commit 之后 | 已持久化 | 已变更 | **已清零** | 新值 | **已提交**：undo log 不存在 |
-
-### 12.3 关键观察
-
-```
-CP3 是最有意思的崩溃点：
-- 用户数据已持久化（正确的最终值）
-- 但 undo log 仍有效（gen_num 未变）
-- 恢复时 undo 回放会"覆盖"已持久化的正确数据
-- 这是安全的！因为 undo 保存的是旧数据，覆盖后回到 pre-tx 状态
-- 分配器未 publish → 预留块未激活 → 逻辑上分配未完成
-
-CP5 是提交的实际完成点：
-- palloc_publish 中 redo 处理了 gen_num++ action
-- gen_num 变化使 undo 条目 checksum 失效
-- 恢复时 undo 条目被跳过 → 不回滚
-- 用户数据 + 分配器状态均一致
-```
-
----
-
-## 13. 崩溃点分析：事务中止
-
-```mermaid
-sequenceDiagram
-    participant APP as 应用
-    participant TX as tx_abort
-    participant UNDO as Undo Log
-    participant HEAP as Heap
-    participant PMEM as 持久内存
-
-    APP->>TX: TX_ABORT()
-
-    Note over TX,PMEM: 崩溃点 A: abort 之前（进程崩溃）
-
-    rect rgb(255, 200, 200)
-        Note right of UNDO: 恢复: operation_process(undo)<br/>回放所有 undo 条目<br/>恢复原始数据<br/>然后 gen_num++ + 释放扩展
-    end
-
-    TX->>UNDO: tx_abort_set() — 回放 undo
-
-    Note over TX,PMEM: 崩溃点 B: abort_set 中途
-
-    rect rgb(255, 230, 200)
-        Note right of UNDO: 恢复: 再次回放 undo（幂等）<br/>已恢复的条目再次写入相同数据<br/>最终全部恢复
-    end
-
-    TX->>UNDO: operation_finish(ULOG_INC_FIRST_GEN_NUM)
-
-    Note over TX,PMEM: 崩溃点 C: gen_num++ 之后，cancel 之前
-
-    rect rgb(200, 255, 200)
-        Note right of HEAP: 恢复: undo 条目已失效<br/>gen_num 已变<br/>数据已恢复<br/>预留块在运行时丢失<br/>但 heap 状态一致
-    end
-
-    TX->>HEAP: palloc_cancel()
-
-    Note over TX,PMEM: 崩溃点 D: cancel 之后（完整回滚）
-
-    rect rgb(200, 200, 255)
-        Note right of PMEM: 恢复: 所有状态已清理<br/>无需额外操作
-    end
-```
-
----
-
-## 14. Range 追踪与重叠处理
-
-### 14.1 Range Tree 结构
-
-事务使用 RAVL（Red-Black AVL Tree）追踪所有已快照的内存区域：
-
-```c
-struct tx_range_def {
-    uint64_t offset;  // Pool 内偏移
-    uint64_t size;    // 大小
-    uint64_t flags;   // 标志（如 POBJ_FLAG_NO_FLUSH）
-};
-```
-
-### 14.2 重叠处理五种场景
-
-```
-场景 1: 新范围完全在已有范围内
-已有: [100, 300)    新: [150, 200)
-结果: 无需额外快照（已有快照覆盖）
-
-场景 2: 新范围向左扩展
-已有: [200, 300)    新: [100, 250)
-结果: 快照 [100, 200)，扩展已有 range 为 [100, 300)
-
-场景 3: 新范围向右扩展
-已有: [100, 200)    新: [150, 300)
-结果: 快照 [200, 300)，扩展已有 range 为 [100, 300)
-
-场景 4: 新范围完全覆盖已有范围
-已有: [150, 250)    新: [100, 300)
-结果: 快照 [100, 150) + [250, 300)，合并为 [100, 300)
-
-场景 5: 相邻范围合并
-已有: [100, 200)    新: [200, 300)
-结果: 无需快照（相邻），合并为 [100, 300)
-```
-
-### 14.3 重叠处理时序
-
-```mermaid
-sequenceDiagram
-    participant APP as 应用
-    participant TX as pmemobj_tx_add
-    participant RAVL as Range Tree
-    participant UNDO as Undo Log
-
-    Note over RAVL: 初始: range=[100,300) 已存在
-
-    APP->>TX: tx_add(obj, 150, 250)<br/>新范围 [150, 400)
-
-    TX->>RAVL: 向后搜索重叠 ranges
-
-    TX->>RAVL: 找到 [100, 300) — 左边重叠
-    Note over TX: [100, 150) 已有快照，跳过
-    Note over TX: [150, 300) 已有快照，跳过
-
-    TX->>UNDO: 仅对 [300, 400) 创建新快照
-    TX->>RAVL: 扩展已有 range 为 [100, 400)
-```
-
----
-
-## 15. 事务状态机
-
-### 15.1 五个阶段
+### 4.1 Primary Lane 自适应切换
 
 ```mermaid
 stateDiagram-v2
-    [*] --> NONE: 线程初始化
-    NONE --> WORK: pmemobj_tx_begin()
-    WORK --> ONCOMMIT: pmemobj_tx_commit()
-    WORK --> ONABORT: pmemobj_tx_abort()
-    ONCOMMIT --> FINALLY: pmemobj_tx_process()
-    ONABORT --> FINALLY: pmemobj_tx_process()
-    FINALLY --> NONE: pmemobj_tx_end()
-    FINALLY --> WORK: 内层事务返回外层
+    [*] --> ASSIGN: 首次访问 Pool
+    ASSIGN --> TRY_PRIMARY: atomic fetch-add<br/>primary = lane_idx
 
-    note right of WORK: 数据修改阶段<br/>tx_add + 直接写入
-    note right of ONCOMMIT: 已成功提交<br/>回调执行
-    note right of ONABORT: 已中止<br/>回调执行
+    TRY_PRIMARY --> ACQUIRED: CAS(locks[primary], 0, 1)
+    TRY_PRIMARY --> RETRY: CAS 失败<br/>primary_attempts--
+    RETRY --> ACQUIRED: CAS 成功
+    RETRY --> SWITCH_PRIMARY: attempts == 0
+    SWITCH_PRIMARY --> TRY_PRIMARY: current → new primary<br/>重置 attempts = 128
+
+    ACQUIRED --> WORKING: lane_idx 获取成功
+    WORKING --> NESTED: lane_hold() 再次调用
+    NESTED --> WORKING: nest_count++<br/>复用同一 lane
+    WORKING --> RELEASED: lane_release()<br/>nest_count == 0
+    RELEASED --> TRY_PRIMARY: CAS(locks[idx], 1, 0)
 ```
 
-### 15.2 状态转换规则
+**自适应意义**：当 primary lane 被频繁占用时，线程不再反复竞争同一条 Lane，而是接受另一条 Lane 作为新的 primary，减少 CAS 竞争。
 
-| 当前状态 | 允许操作 | 目标状态 |
+---
+
+## 5. Arena 分片模型
+
+### 5.1 Arena 架构
+
+```mermaid
+graph TB
+    subgraph "Heap 运行时"
+        AL["arenas.lock<br/>全局 Arena 锁"]
+        AV["Arena 向量<br/>最多 1024 个"]
+    end
+
+    subgraph "Arena 0 (线程A绑定)"
+        B00["bucket[0] (Huge)"]
+        B01["bucket[1] (32B)"]
+        B02["bucket[2] (64B)"]
+        B0N["bucket[254] (4KB+)"]
+    end
+
+    subgraph "Arena 1 (线程B绑定)"
+        B10["bucket[0] (Huge)"]
+        B11["bucket[1] (32B)"]
+        B1N["bucket[254] (4KB+)"]
+    end
+
+    subgraph "Arena N (线程M绑定)"
+        BN0["bucket[0] (Huge)"]
+        BN1["bucket[1] (32B)"]
+        BNN["bucket[254] (4KB+)"]
+    end
+
+    subgraph "共享"
+        DB["default_bucket<br/>大块分配<br/>所有线程共享"]
+        RC["Recycler<br/>跨 Arena Run 共享"]
+    end
+
+    AL --> AV
+    AV --> B00
+    AV --> B10
+    AV --> BN0
+    AV --> DB
+    AV --> RC
+```
+
+### 5.2 Arena 分配参数
+
+| 参数 | 值 | 说明 |
 |---|---|---|
-| `TX_STAGE_NONE` | `pmemobj_tx_begin()` | `TX_STAGE_WORK` |
-| `TX_STAGE_WORK` | `pmemobj_tx_commit()` | `TX_STAGE_ONCOMMIT` |
-| `TX_STAGE_WORK` | `pmemobj_tx_abort()` | `TX_STAGE_ONABORT` |
-| `TX_STAGE_ONCOMMIT` | `pmemobj_tx_process()` | `TX_STAGE_FINALLY` |
-| `TX_STAGE_ONABORT` | `pmemobj_tx_process()` | `TX_STAGE_FINALLY` |
-| `TX_STAGE_FINALLY` | `pmemobj_tx_end()` | `TX_STAGE_NONE`（外层）或 `TX_STAGE_WORK`（内层） |
+| `MAX_DEFAULT_ARENAS` | 1024 | Arena 上限 |
+| `MAX_ALLOCATION_CLASSES` | 255 | 分配类上限 |
+| 默认 Arena 数 | `sysconf(_SC_NPROCESSORS_ONLN)` | 等于 CPU 核数 |
+| `HEAP_DEFAULT_GROW_SIZE` | 128MB | Heap 扩展增量 |
 
-### 15.3 非法转换保护
+### 5.3 线程绑定 Arena 流程
+
+```mermaid
+sequenceDiagram
+    participant T as 线程
+    participant TLS as pthread_key
+    participant AL as arenas.lock
+    participant AV as Arena 向量
+    participant ARENA as 目标 Arena
+
+    T->>TLS: heap_thread_arena(heap)
+    TLS->>TLS: os_tls_get(key)
+
+    alt 已绑定
+        TLS-->>T: 返回绑定的 Arena
+    else 首次绑定
+        T->>AL: util_mutex_lock(&arenas.lock)
+
+        T->>AV: 遍历所有 automatic Arena
+        Note over AV: 查找 nthreads 最少的 Arena
+
+        T->>ARENA: heap_arena_thread_attach()
+        Note over ARENA: arena->nthreads++
+
+        T->>TLS: os_tls_set(key, arena)
+
+        T->>AL: util_mutex_unlock()
+
+        TLS-->>T: 返回 Arena
+    end
+```
+
+### 5.4 Arena 分配模式
+
+| 模式 | 说明 | 使用场景 |
+|---|---|---|
+| `POBJ_ARENAS_ASSIGNMENT_THREAD_KEY`（默认） | 每 pthread 绑定一个 Arena（最少线程优先） | 通用场景 |
+| `POBJ_ARENAS_ASSIGNMENT_GLOBAL` | 所有线程共享一个 Arena | 低线程数/测试 |
+
+---
+
+## 6. Bucket 与 Run 锁
+
+### 6.1 分配路径中的锁层次
+
+```mermaid
+sequenceDiagram
+    participant T as 线程
+    participant ARENA as Arena (线程绑定)
+    participant BUCKET as bucket_locked
+    participant RLOCK as run_lock
+    participant PMEM as 持久化
+
+    T->>ARENA: heap_bucket_acquire(class_id)
+    ARENA->>BUCKET: bucket_acquire()
+    BUCKET->>BUCKET: util_mutex_lock(&bucket.lock)
+    Note over BUCKET: Level 2 锁
+
+    BUCKET-->>T: 返回 bucket（已加锁）
+
+    T->>T: 从 bucket 容器查找空闲块
+
+    alt 需要修改持久化 bitmap
+        T->>RLOCK: heap_get_run_lock(chunk_id)
+        RLOCK->>RLOCK: util_mutex_lock(&run_locks[chunk_id % nlocks])
+        Note over RLOCK: Level 3 锁
+
+        T->>PMEM: 创建 redo 条目<br/>bitmap OR/AND
+        T->>PMEM: palloc_exec_actions()
+
+        RLOCK->>RLOCK: util_mutex_unlock()
+    end
+
+    BUCKET->>BUCKET: util_mutex_unlock(&bucket.lock)
+```
+
+### 6.2 锁排序规则
+
+```
+锁获取顺序（严格从外到内）：
+
+1. arenas.lock          — Arena 管理（创建/分配/销毁）
+2. bucket locks         — 按 bucket ID 排序获取（防死锁）
+3. run locks            — 按 lock 地址排序获取
+4. memory block locks   — 由 palloc_exec_actions 排序
+
+运行时锁（bucket）必须在持久化锁（run）之前获取。
+```
+
+### 6.3 Run Lock 分散
+
+```
+chunk_id:  0    1    2    3  ...  65527
+            │    │    │    │        │
+run_locks:  [0]  [1]  [2]  [3] ... [nlocks-1]
+            ↑ hash: chunk_id % nlocks
+
+nlocks 最多 = MAX_CHUNK = 65528
+Valgrind 下 nlocks = 1024（减少锁开销）
+```
+
+### 6.4 单条目优化
+
+当 redo log 仅包含一个 8 字节操作（`SET`/`AND`/`OR`）时，PMDK 跳过完整 redo 流程：
 
 ```c
-// 以下断言在运行时检查：
-ASSERT_IN_TX()       // stage != TX_STAGE_NONE（必须在事务中）
-ASSERT_TX_STAGE_WORK() // stage == TX_STAGE_WORK（必须在工作阶段）
-
-// 非法操作示例：
-// pmemobj_tx_add() 在 TX_STAGE_ONCOMMIT 调用 → FATAL
-// pmemobj_tx_commit() 在 TX_STAGE_NONE 调用 → FATAL
+// 8 字节对齐写入在 x86 上天然原子
+if (ctx->pshadow_ops.offset == sizeof(struct ulog_entry_val)) {
+    ulog_entry_apply(e, 1, ctx->p_ops);  // 直接写入
+    redo_process = 0;
+}
 ```
 
 ---
 
-## 16. Pool 一致性检查
+## 7. PMEM 持久化锁
 
-### 16.1 Pool Open 检查序列
+### 7.1 混合持久化-易失性设计
+
+```c
+// PMEMmutex / PMEMrwlock / PMEMcond
+// 用户视角：64 字节不透明结构（嵌入用户对象）
+// 内部视角：持久化 runid + 易失性 POSIX 锁
+
+typedef union padded_pmemmutex {
+    char padding[64];        // 64 字节对齐
+    struct {
+        uint64_t runid;      // 持久化：pool 打开生命周期
+        os_mutex_t mutex;    // 易失性：POSIX mutex
+    } pmemmutex;
+} PMEMmutex_internal;
+```
+
+### 7.2 runid 懒初始化协议
 
 ```mermaid
 sequenceDiagram
-    participant OPEN as pmemobj_open
-    participant HDR as Pool Header
-    participant DSC as Descriptor
-    participant RUN as run_id 检查
-    participant LANE_CHK as Lane 检查
-    participant HEAP_CHK as Heap 检查
-    participant RECOVER as 恢复
+    participant T1 as 线程1
+    participant T2 as 线程2
+    participant PMEM as 持久内存
 
-    OPEN->>HDR: 验证 signature "PMEMOBJ"
-    HDR->>HDR: 验证 header checksum
-    HDR->>HDR: 验证版本号
+    Note over PMEM: runid 初始值 = 旧 pool run_id
 
-    OPEN->>DSC: obj_descr_check()
-    DSC->>DSC: 验证 descriptor checksum
-    DSC->>DSC: 验证 layout 字符串
-    DSC->>DSC: 验证 heap 对齐
+    T1->>PMEM: 读取 runid
+    Note over T1: runid ≠ pop->run_id → 需要初始化
 
-    OPEN->>RUN: 检查 run_id
-    alt run_id 为奇数
-        Note over RUN: 上次 pool open 时崩溃<br/>不一致标记
-    else run_id 为偶数
-        Note over RUN: 正常
+    T1->>PMEM: CAS(runid, old, pop->run_id - 1)
+    Note over T1: runid - 1 = "初始化进行中"
+
+    T2->>PMEM: 读取 runid
+    Note over T2: runid == pop->run_id - 1<br/>另一个线程在初始化
+
+    T2->>T2: continue（自旋等待）
+
+    T1->>T1: os_mutex_init(&mutex)
+    T1->>PMEM: CAS(runid, pop->run_id - 1, pop->run_id)
+    Note over PMEM: runid == pop->run_id → 初始化完成
+
+    T2->>PMEM: 读取 runid
+    Note over T2: runid == pop->run_id → 快速路径
+    T2->>T2: 直接使用 mutex
+```
+
+**三态协议**：
+
+| runid 值 | 含义 | 线程行为 |
+|---|---|---|
+| `pop->run_id` | 已初始化 | 直接使用（快速路径） |
+| `pop->run_id - 1` | 初始化进行中 | 自旋等待 |
+| 其他值 | 未初始化 | CAS 竞争初始化权 |
+
+**run_id 始终为偶数**（每次 pool open += 2），确保三态可区分。
+
+---
+
+## 8. 锁与事务的集成
+
+### 8.1 事务内锁管理
+
+```mermaid
+sequenceDiagram
+    participant APP as 应用
+    participant TX as Transaction
+    participant LOCK as PMEMmutex
+    participant UNDO as Undo Log
+    participant PMEM as 持久内存
+
+    APP->>TX: TX_BEGIN(pop)
+
+    APP->>TX: pmemobj_tx_lock(lock)
+    TX->>TX: add_to_tx_and_lock()
+    TX->>LOCK: pmemobj_mutex_lock(pop, lock)
+    TX->>TX: 注册到 tx->tx_locks 链表
+
+    APP->>TX: pmemobj_tx_add(obj, offset, size)
+    TX->>UNDO: 保存快照
+    Note over TX,UNDO: 如果 [offset, offset+size) 与 lock 重叠<br/>排除 lock 范围
+
+    APP->>PMEM: 修改对象数据
+
+    alt 提交
+        APP->>TX: TX_COMMIT()
+        TX->>TX: release_and_free_tx_locks()
+        TX->>LOCK: pmemobj_mutex_unlock()
+    else 中止
+        APP->>TX: TX_ABORT()
+        TX->>UNDO: tx_restore_range()
+        Note over UNDO: 排除 tx_locks 覆盖的范围<br/>不恢复锁的 volatile 状态
+        TX->>TX: release_and_free_tx_locks()
+        TX->>LOCK: pmemobj_mutex_unlock()
+    end
+```
+
+### 8.2 Undo 排除锁的原理
+
+```
+假设对象布局:  [lock][field1][field2]
+
+tx_add(obj, 0, sizeof(lock)+sizeof(field1)+sizeof(field2)):
+  Undo 快照: [lock_old | field1_old | field2_old]
+
+tx_abort() 时:
+  tx_restore_range() 遍历 tx_locks:
+    发现 lock 范围 [0, 64) 在 tx_locks 中
+    排除: [field1_old | field2_old]
+
+  仅恢复 field1 和 field2，不动 lock
+  → lock 的 volatile mutex 状态保持不变
+  → 后续 pmemobj_mutex_unlock() 正常工作
+```
+
+**如果不排除锁**：Undo 恢复会覆盖 `PMEMmutex` 的 `runid` 和 `os_mutex_t`，导致 POSIX 锁状态损坏。
+
+---
+
+## 9. Critnib 并发数据结构
+
+### 9.1 Critnib 架构
+
+Critnib 是 PMDK 自研的混合 **基数树 + Critbit 树**：
+
+```
+         critnib_root
+            │
+         ┌──┴──┐
+         │node1│  shift=60, path=0xABCD...
+         └──┬──┘
+      ┌─────┼─────┬─────┐
+   [0]  [1]  [2] ... [15]   ← 16 个子节点（4-bit slice）
+      │         │
+    leaf1     node2          ← 内部节点/叶子标记（bit 0）
+    key=A     shift=56
+    val=...     │
+            ┌───┴───┐
+          [0] ... [15]
+           │
+         leaf2
+         key=B
+         val=...
+```
+
+### 9.2 读写并发模型
+
+```mermaid
+sequenceDiagram
+    participant R1 as 读线程1
+    participant R2 as 读线程2
+    participant W as 写线程
+    participant CN as critnib
+
+    Note over R1,CN: 读操作 — 无锁
+
+    R1->>CN: wrs1 = remove_count
+    R1->>CN: 遍历树查找 key
+    R1->>CN: wrs2 = remove_count
+    alt wrs1 + DELETED_LIFE <= wrs2
+        Note over R1: 期间删除操作过多 → 重试
+        R1->>CN: 重新读取 wrs1 并遍历
+    else 安全
+        R1-->>R1: 返回结果
     end
 
-    OPEN->>LANE_CHK: lane_check()
-    LANE_CHK->>LANE_CHK: 检查 redo log 状态
+    Note over W,CN: 写操作 — 全局互斥锁
 
-    OPEN->>HEAP_CHK: heap_check()
-    HEAP_CHK->>HEAP_CHK: 验证 heap header checksum
-    HEAP_CHK->>HEAP_CHK: 验证 signature "MEMORY_HEAP_HDR"
-    HEAP_CHK->>HEAP_CHK: 验证 zone/chunk 链
-
-    OPEN->>RECOVER: lane_recover_and_section_boot()
-    Note over RECOVER: 处理所有 redo + undo log
-
-    OPEN->>OPEN: run_id += 2 (变为偶数)
-    OPEN->>OPEN: 持久化 run_id
+    W->>CN: util_mutex_lock(&mutex)
+    W->>CN: 插入/删除/更新节点
+    CN->>CN: remove_count++
+    W->>CN: util_mutex_unlock(&mutex)
 ```
 
-### 16.2 libpmempool 检查工具
+**设计取舍**：写操作用全局锁（简单高效），读操作完全无锁（RCU-like 版本检查）。
 
-```
-检查管线（按顺序）:
+### 9.3 Critnib 使用场景
 
-1. check_bad_blocks   — 底层存储坏块检测
-2. check_backup       — 创建备份（修复前）
-3. check_sds          — Shutdown State 验证
-4. check_pool_hdr     — Pool Header 校验和/签名/UUID
-5. check_pool_hdr_uuids — 副本间 UUID 链路验证
-
-检查结果:
-├── CHECK_RESULT_CONSISTENT     — 健康
-├── CHECK_RESULT_REPAIRED       — 已修复
-├── CHECK_RESULT_NOT_CONSISTENT — 不可修复
-├── CHECK_RESULT_CANNOT_REPAIR  — 需要 ADVANCED 模式
-└── CHECK_RESULT_ASK_QUESTIONS  — 需要用户确认
-```
+| 使用位置 | Key | Value | 用途 |
+|---|---|---|---|
+| Pool 查找（pools_ht） | `pop->uuid_lo` | `PMEMobjpool*` | `pmemobj_open` 返回已有句柄 |
+| 地址查找（pools_tree） | `(uint64_t)addr` | `PMEMobjpool*` | `pmemobj_pool_by_ptr()` |
+| Lane info（per-thread） | `pop->uuid_lo` | `lane_info*` | 线程本地 lane 缓存 |
 
 ---
 
-## 17. 多副本一致性
+## 10. Pool 级别同步
 
-### 17.1 副本同步机制
+### 10.1 Pool Open/Close 同步
 
 ```mermaid
 sequenceDiagram
+    participant T1 as 线程1
+    participant T2 as 线程2
+    participant GM as pools_mutex
+
+    T1->>GM: lock (open pool A)
+    Note over T1: mmap → boot → 插入 critnib
+    T1->>GM: unlock
+
+    T2->>GM: lock (open pool A)
+    T2->>T2: critnib_get(uuid) → 已存在
+    Note over T2: 增加 refcount
+    T2->>GM: unlock
+
+    T1->>GM: lock (close pool A)
+    Note over T1: refcount > 0 → 不真正关闭
+    T1->>GM: unlock
+```
+
+### 10.2 全局 Critnib 初始化（CAS）
+
+```c
+// obj.c:138
+if (pools_ht == NULL) {
+    critnib *c = critnib_new();
+    if (!util_bool_compare_and_swap64(&pools_ht, NULL, c))
+        critnib_delete(c);  // 另一个线程赢了
+}
+```
+
+**无需 `pools_mutex`**：CAS 保证只有一个线程成功创建 critnib，失败的线程清理自己的实例。
+
+---
+
+## 11. 多副本复制线程模型
+
+### 11.1 复制函数链
+
+```mermaid
+sequenceDiagram
+    participant T as 工作线程
     participant MASTER as 主副本
-    participant REPLICA as 从副本
-    participant LANE as Lane 区域
+    participant R1 as 副本1
+    participant R2 as 副本2
 
-    Note over MASTER,LANE: Pool Open 时
+    T->>T: pmemops_persist(addr, len)
+    Note over T: 主副本 p_ops 被替换为复制 wrapper
 
-    MASTER->>MASTER: 恢复所有 Redo Log
-    MASTER->>MASTER: 恢复所有 Undo Log
-    Note over MASTER: 主副本恢复完成
+    T->>MASTER: persist_local(addr, len)
+    Note over MASTER: clwb + sfence
 
-    MASTER->>REPLICA: 验证从副本 header checksum
+    T->>R1: memcpy_local(raddr, addr, len)
+    Note over R1: 非持久化复制<br/>（或持久化如果 R1 在 PMEM 上）
 
-    alt 从副本一致
-        MASTER->>LANE: 复制 Lane 区域
-        MASTER->>REPLICA: memcpy_local(dst, src, lane_size)
-        Note over REPLICA: 从副本获得与主副本<br/>相同的 Lane 状态
-    else 从副本不一致
-        Note over REPLICA: 报告不一致错误
+    T->>R2: memcpy_local(raddr, addr, len)
+
+    Note over T,R2: 单线程串行复制<br/>无额外锁
+```
+
+**特点**：
+- 复制是**单线程串行**的：先主后副本
+- 无显式副本间锁：Lane/事务机制在更高层保证串行化
+- 地址转换：`raddr = (char *)rep + (uintptr_t)addr - (uintptr_t)master`
+- 每个副本独立选择持久化方式（PMEM 用 clwb，非 PMEM 用 msync）
+
+---
+
+## 12. 线程生命周期管理
+
+### 12.1 线程本地存储
+
+| 变量 | 存储方式 | 用途 | 析构函数 |
+|---|---|---|---|
+| `static __thread struct tx tx` | `__thread` | 事务状态（stage, lane, locks, ranges） | 无（静态） |
+| `__thread Lane_info_cache` | `__thread` | 最近使用的 lane_info | 无 |
+| `__thread Lane_info_ht` | `__thread` | per-pool lane info 哈希表 | `lane_info_ht_destroy` |
+| `__thread Lane_info_records` | `__thread` | lane_info 链表 | 同上 |
+| `Lane_info_key` | `pthread_key_t` | 触发析构 | `lane_info_ht_destroy` |
+| Arena assignment key | `pthread_key_t` | Arena 绑定 | `heap_thread_arena_destructor` |
+| `_pobj_cached_pool` | `__thread` | 最近使用的 Pool 句柄 | 无 |
+
+### 12.2 线程退出清理时序
+
+```mermaid
+sequenceDiagram
+    participant T as 线程
+    participant TX as 事务检查
+    participant ARENA as Arena
+    participant LANE as Lane Info
+    participant LIB as 库
+
+    T->>TX: pthread_key destructors 触发
+
+    TX->>ARENA: heap_thread_arena_destructor()
+    ARENA->>ARENA: util_mutex_lock(&arenas.lock)
+    ARENA->>ARENA: arena->nthreads--
+    alt nthreads == 0
+        ARENA->>ARENA: nactive--
     end
+    ARENA->>ARENA: util_mutex_unlock()
+
+    T->>LANE: lane_info_ht_destroy()
+    LANE->>LANE: 遍历 lane_info 链表
+    LANE->>LANE: 释放每个 lane_info
+    LANE->>LANE: critnib_delete(ht)
+    LANE->>LANE: Lane_info_cache = NULL
+
+    Note over T,LIB: 注意: __thread 变量随线程销毁自动回收
+    Note over T,LIB: 如果线程有活跃事务 → 行为未定义
 ```
 
-### 17.2 UUID 链路验证
+### 12.3 库初始化/清理
 
 ```
-副本间通过 UUID 链路保证拓扑正确:
+进程启动:
+  obj_init() [__attribute__((constructor))]
+    ├── os_mutex_init(&pools_mutex)
+    ├── ctl_global_register()
+    └── lane_info_boot()  → pthread_key_create(Lane_info_key, destructor)
 
-Pool Part 0 ←→ Part 1 ←→ Part 2
-     ↓ prev_part_uuid / next_part_uuid
-     ↑
-
-Replica 0 ←→ Replica 1 ←→ Replica 2
-     ↓ prev_repl_uuid / next_repl_uuid
-     ↑
-
-每个 Part 存储:
-  - uuid (自身)
-  - prev_part_uuid (前一个 Part)
-  - next_part_uuid (后一个 Part)
-  - prev_repl_uuid (前一个 Replica 的对应 Part)
-  - next_repl_uuid (后一个 Replica 的对应 Part)
-  - poolset_uuid (所有 Part 共享)
+进程退出:
+  obj_fini() [__attribute__((destructor))]
+    ├── critnib_delete(pools_ht)
+    ├── critnib_delete(pools_tree)
+    ├── lane_info_destroy()  → pthread_key_delete(Lane_info_key)
+    └── os_mutex_destroy(&pools_mutex)
 ```
 
 ---
 
-## 18. 与 DAOS 一致性的对比
+## 13. 并发分配完整时序
 
-| 特性 | PMDK (libpmemobj) | DAOS (VOS) |
+```mermaid
+sequenceDiagram
+    participant TA as 线程A
+    participant TB as 线程B
+    participant LA as Lane 0
+    participant LB as Lane 8
+    participant AA as Arena 0
+    participant AB as Arena 1
+    participant PMEM as 持久内存
+
+    Note over TA,TB: 两个线程同时分配 64 字节对象
+
+    TA->>LA: lane_hold(pop)
+    TA->>LA: CAS(locks[0], 0, 1) ✓
+
+    TB->>LB: lane_hold(pop)
+    TB->>LB: CAS(locks[8], 0, 1) ✓
+
+    par 线程A 分配
+        TA->>AA: heap_bucket_acquire(class=64B)
+        AA->>AA: lock(bucket[64B])
+        TA->>AA: 从 free list 取块
+        TA->>AA: unlock(bucket[64B])
+        TA->>PMEM: redo: bitmap[idx] |= mask
+        TA->>LA: lane_release()
+    and 线程B 分配
+        TB->>AB: heap_bucket_acquire(class=64B)
+        AB->>AB: lock(bucket[64B])
+        TB->>AB: 从 free list 取块
+        TB->>AB: unlock(bucket[64B])
+        TB->>PMEM: redo: bitmap[idx] |= mask
+        TB->>LB: lane_release()
+    end
+
+    Note over TA,TB: 无竞争！不同 Lane + 不同 Arena
+```
+
+---
+
+## 14. 并发事务完整时序
+
+```mermaid
+sequenceDiagram
+    participant TA as 线程A
+    participant TB as 线程B
+    participant LA as Lane 0
+    participant LB as Lane 8
+    participant UA as Undo Log 0
+    participant UB as Undo Log 8
+    participant PMEM as 持久内存
+
+    Note over TA,TB: 两个线程并发事务，操作不同对象
+
+    TA->>LA: lane_hold() → Lane 0
+    TB->>LB: lane_hold() → Lane 8
+
+    par 线程A 事务
+        TA->>TA: TX_BEGIN()
+        TA->>UA: tx_add(objA, 0, 256)<br/>快照到 Undo Log 0
+        TA->>PMEM: 直接修改 objA 数据
+        TA->>PMEM: flush(objA) + drain
+        TA->>LA: redo(gen_num++) for Undo 0
+        TA->>UA: 清零 Undo Log 0
+        TA->>LA: lane_release()
+    and 线程B 事务
+        TB->>TB: TX_BEGIN()
+        TB->>UB: tx_add(objB, 0, 128)<br/>快照到 Undo Log 8
+        TB->>PMEM: 直接修改 objB 数据
+        TB->>PMEM: flush(objB) + drain
+        TB->>LB: redo(gen_num++) for Undo 8
+        TB->>UB: 清零 Undo Log 8
+        TB->>LB: lane_release()
+    end
+
+    Note over TA,TB: 完全并行，无共享状态
+```
+
+### 14.1 同对象并发场景
+
+```
+如果线程A和线程B同时修改同一个对象的相同范围:
+
+⚠️ 这是用户级别的数据竞争！PMDK 不检测也不防止。
+
+后果:
+  - 两个事务各自独立提交（各自 Lane 隔离）
+  - Undo Log 各自快照不同的旧值
+  - 最后一个提交的覆盖前一个的结果
+  - 数据不一致
+
+解决方案: 用户必须使用 PMEMmutex + pmemobj_tx_lock()
+  → 确保同一对象的修改串行化
+```
+
+---
+
+## 15. libpmem2 线程安全模型
+
+### 15.1 设计原则
+
+libpmem2 是**无状态库**，几乎不需要线程同步：
+
+| 全局状态 | 类型 | 保护方式 |
 |---|---|---|
-| 日志类型 | Undo Log + Redo Log | ILOG (Incarnation Log) |
-| 分配器保护 | Redo Log（internal + external） | VEA Reserve-Publish + PMDK 事务 |
-| 用户数据保护 | Undo Log（快照旧数据） | PMDK 事务（DAOS 基于 PMDK） |
-| 版本管理 | gen_num（单值递增） | epoch（全局逻辑时钟） |
-| 检测机制 | Fletcher64 + gen_num 绑定 | CRC/checksum + epoch 比较 |
-| 恢复顺序 | Redo → Boot → Undo | Redo → Boot → Undo（继承自 PMDK） |
-| 分布式事务 | 不支持（单机） | DTX（两阶段提交 + CoS） |
-| 副本一致性 | Lane 区域复制 | Leader-Follower RPC 复制 |
-| 并发控制 | Lane CAS（1024 条） | B+tree 乐观并发 + 锁 |
+| `static struct pmem2_arch_info Info` | 函数指针表 | 只读（初始化后不变） |
+| `State.range_map` | 映射区间树 | `os_rwlock_t`（读写锁） |
 
-**关键关系**：DAOS 的 VOS 层基于 PMDK 构建，继承并扩展了 PMDK 的一致性机制。DAOS 在 PMDK Undo Log 之上增加了 ILOG 版本追踪和分布式事务（DTX）。
+### 15.2 映射注册
+
+```
+pmem2_map() → util_rwlock_wrlock() → 插入 ravl_interval → util_rwlock_wrunlock()
+pmem2_persist() → util_rwlock_rdlock() → 查找 map → flush → util_rwlock_rdunlock()
+```
+
+### 15.3 为什么不需要 per-call 锁
+
+```c
+// 每个 pmem2_map 独立持有函数指针
+struct pmem2_map {
+    persist_fn  persist_fn;   // 根据 is_pmem + eADR 确定
+    flush_fn    flush_fn;
+    drain_fn    drain_fn;
+    memmove_fn  memmove_fn;   // 根据 SIMD 能力确定
+};
+
+// 调用 persist 时:
+map->persist_fn(map, addr, len);
+// 只读 map 字段 + 全局 Info（不可变） → 无竞争
+```
 
 ---
 
-## 19. 对比总结
+## 16. 对比总结
 
-### 19.1 一致性机制对比表
+### 16.1 锁层次对比
 
-| 机制 | PMDK | RocksDB | SQLite | ext4 |
+| 层级 | PMDK | Glibc malloc | jemalloc | tcmalloc |
 |---|---|---|---|---|
-| 日志类型 | Undo + Redo | WAL (Redo) | WAL (Redo) | JBD2 (Redo) |
-| 原子操作 | clwb + sfence | fsync | fsync | journal commit |
-| 延迟 | ~100ns | ~ms | ~ms | ~ms |
-| 回滚方式 | Undo Log 快照恢复 | WAL 回放反向操作 | 回滚 WAL | 回滚 journal |
-| 并发 | Lane (1024) | 无锁 memtable | WAL + SHM | journaling |
-| 崩溃恢复 | Checksum + gen_num | Sequence + checksum | Checksum | Checksum + journal |
+| 全局锁 | pools_mutex（1个） | arena mutex（N个） | — | — |
+| 分片 | Arena（CPU核数） | Arena（N个） | Arena × Slab | CentralFreeList |
+| 类级别 | Bucket（Arena×Class） | Bin（全局） | — | — |
+| Chunk 级别 | Run Lock（hash） | — | — | Span Lock |
+| 事务锁 | Lane CAS（1024） | — | — | — |
+| 用户锁 | PMEMmutex（嵌入对象） | pthread_mutex | — | — |
 
-### 19.2 PMDK 一致性保证总结
+### 16.2 并发模型对比
 
-| 保证类型 | 实现机制 | 强度 |
+| 特性 | PMDK | RocksDB | Redis |
+|---|---|---|---|
+| 事务并发 | Lane（1024路 CAS） | OptimisticTransactionDB | 单线程命令 |
+| 分配并发 | Arena 分片 + Bucket 锁 | Arena 分片 | 单线程 |
+| 读并发 | Critnib（无锁读） | DB::Get（共享锁） | 单线程 |
+| 写并发 | 独立 Lane + Arena | 写锁（DB/WAL ColumnFamily） | 单线程 |
+| 用户数据保护 | PMEMmutex（用户责任） | 用户层 | 用户层 |
+| 副本同步 | 单线程串行 | 无原生支持 | 异步复制 |
+
+### 16.3 PMDK 线程模型总结
+
+| 设计决策 | 实现方式 | 效果 |
 |---|---|---|
-| **原子性** | Undo Log + 两阶段提交 | 强（任何时刻崩溃要么全做要么全不做） |
-| **持久性** | clwb + sfence + drain | 强（drain 完成后数据必定到达 PMEM） |
-| **隔离性** | Lane CAS + per-thread undo | 中（同 range 并发需应用层加锁） |
-| **一致性** | Redo 恢复分配器 + Undo 恢复数据 | 强（Redo-before-Undo 保证全局一致） |
-| **幂等性** | BUF_CPY 幂等 + 单条目原子 | 强（多次恢复不导致不一致） |
+| **Lane 隔离** | 1024 路 CAS Lane | 事务完全并行 |
+| **Arena 分片** | 每 CPU 核一个 Arena | 分配 90%+ 无竞争 |
+| **Critnib 无锁读** | 版本号 + 重试 | 查找无锁 |
+| **CAS 懒初始化** | runid 三态协议 | 锁初始化无全局锁 |
+| **锁排序** | arenas → bucket → run | 无死锁 |
+| **Undo 排除锁** | tx_locks 链表检查 | abort 不损坏锁 |
 
 ---
 
-## 20. 源码索引
+## 17. 源码索引
 
-### 事务核心
-
-| 文件 | 内容 |
-|---|---|
-| `src/libpmemobj/tx.c` | 事务 API、`tx_pre_commit`、`tx_post_commit`、`tx_abort`、`tx_abort_set`、range 追踪 |
-| `src/libpmemobj/tx.h` | 事务内部结构、`struct tx` |
-| `src/include/libpmemobj/tx_base.h` | `enum pobj_tx_stage` 状态枚举 |
-
-### 日志系统
+### Lane 系统
 
 | 文件 | 内容 |
 |---|---|
-| `src/libpmemobj/ulog.h` | `struct ulog`、条目类型宏、标志位 |
-| `src/libpmemobj/ulog.c` | `ulog_recover`、`ulog_process`、`ulog_clobber`、`ulog_entry_buf_create`、checksum 验证 |
-| `src/libpmemobj/memops.c` | `operation_resume`、`operation_process`、`operation_finish` |
-| `src/libpmemobj/memops.h` | `struct operation_context` |
+| `src/libpmemobj/lane.h` | `lane_layout`、`lane`、`lane_descriptor`、`lane_info`、LANE_JUMP 等常量 |
+| `src/libpmemobj/lane.c` | `lane_hold`/`lane_release`、`get_lane`、`lane_info_boot`、`lane_recover_and_section_boot` |
 
-### 分配器
+### 堆并发
 
 | 文件 | 内容 |
 |---|---|
-| `src/libpmemobj/palloc.c` | `palloc_publish`、`palloc_cancel`、`palloc_exec_actions` |
-| `src/libpmemobj/heap.c` | `heap_boot`、`heap_check`、`heap_verify_header`、`heap_verify_zone` |
+| `src/libpmemobj/heap.c` | `arenas` 结构、Arena 创建/分配/销毁、`heap_bucket_acquire`、run locks、recycler |
+| `src/libpmemobj/heap.h` | `palloc_heap` 运行时结构 |
+| `src/libpmemobj/heap_layout.h` | `heap_layout`、`zone`、`chunk_header`、ZONE_MAX_SIZE |
+| `src/libpmemobj/bucket.c` | `bucket_acquire`/`bucket_release`、`bucket_locked` |
+| `src/libpmemobj/bucket.h` | `bucket`、`bucket_locked` |
+| `src/libpmemobj/memblock.c` | `run_get_lock`、`huge_get_lock` |
+| `src/libpmemobj/recycler.c` | `recycler` 结构、跨 Arena Run 共享 |
 
-### Lane 并发
+### 锁与同步
 
 | 文件 | 内容 |
 |---|---|
-| `src/libpmemobj/lane.h` | `struct lane_layout`、Lane 大小常量 |
-| `src/libpmemobj/lane.c` | `lane_recover_and_section_boot`、`lane_hold`/`lane_release` |
+| `src/libpmemobj/sync.h` | `PMEMmutex_internal`、`PMEMrwlock_internal`、`PMEMcond_internal` |
+| `src/libpmemobj/sync.c` | `_get_value`（runid CAS 初始化） |
+| `src/include/libpmemobj/thread.h` | `PMEMmutex`、`PMEMrwlock`、`PMEMcond`（64B 公共类型） |
+
+### 事务并发
+
+| 文件 | 内容 |
+|---|---|
+| `src/libpmemobj/tx.c` | `struct tx`（`__thread`）、`tx_locks` 链表、`tx_restore_range` 锁排除、`release_and_free_tx_locks` |
+
+### Critnib
+
+| 文件 | 内容 |
+|---|---|
+| `src/core/critnib.h` | `critnib` 结构、`critnib_get`/`insert`/`remove` |
+| `src/core/critnib.c` | 混合 radix+critbit 实现、无锁读、RCU-like 延迟释放 |
+
+### OS 线程抽象
+
+| 文件 | 内容 |
+|---|---|
+| `src/core/os_thread.h` | `os_mutex_t`、`os_rwlock_t`、`os_cond_t`、`os_tls_key_t` |
+| `src/core/os_thread_posix.c` | POSIX pthread 实现 |
 
 ### Pool 管理
 
 | 文件 | 内容 |
 |---|---|
-| `src/libpmemobj/obj.c` | `pmemobj_open`、`obj_check_basic`、`obj_descr_check`、`run_id` |
-| `src/libpmemobj/obj.h` | `struct PMEMobjpool` |
+| `src/libpmemobj/obj.c` | `pools_mutex`、`obj_pool_init`/`obj_fini`、`pools_ht`/`pools_tree`、多副本复制函数 |
 
-### Checksum
-
-| 文件 | 内容 |
-|---|---|
-| `src/core/util.c` | `util_checksum`、`util_checksum_compute`、`util_checksum_seq`（Fletcher64） |
-| `src/core/util.h` | Checksum 函数声明 |
-
-### 持久化原语
+### libpmem2
 
 | 文件 | 内容 |
 |---|---|
-| `src/libpmem/pmem.c` | `pmem_persist`、`pmem_flush`、`pmem_drain` |
-| `src/libpmem2/x86_64/flush.h` | `clwb`、`clflushopt`、`clflush` 内联实现 |
-| `src/libpmem2/x86_64/init.c` | CPU 特性检测、函数指针绑定 |
-| `src/libpmem2/x86_64/cpu.c` | CPUID 特性枚举 |
-
-### 一致性检查工具
-
-| 文件 | 内容 |
-|---|---|
-| `src/libpmempool/check.c` | 检查管线编排 |
-| `src/libpmempool/check_pool_hdr.c` | Header 检查与修复 |
-| `src/libpmempool/check_sds.c` | Shutdown State 检查 |
-| `src/libpmempool/check_util.c` | 检查工具框架 |
+| `src/libpmem2/persist.c` | `static Info`（只读函数指针表） |
+| `src/libpmem2/map.c` | `State.range_map_lock`（读写锁） |
+| `src/libpmem2/libpmem2.c` | `libpmem2_init`/`libpmem2_fini`（constructor/destructor） |
