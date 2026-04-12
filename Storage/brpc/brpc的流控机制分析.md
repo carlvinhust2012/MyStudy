@@ -258,7 +258,7 @@ flowchart TD
     CHECK1 -->|是| INC[当前并发 +1]
 
     INC --> EXPLORE{rand < explore_ratio?<br/>（30% 概率）}
-    EXPLORE -->|是| PLUS[允许超调<br/>current 不受 max 限制]
+    EXPLORE -->|是| PLUS["允许超调, current 不受 max 限制"]
     EXPLORE -->|否| NORMAL[正常检查]
     PLUS --> RECORD[记录请求开始时间]
     NORMAL --> RECORD
@@ -274,7 +274,7 @@ flowchart TD
 sequenceDiagram
     participant RPC as 请求完成
     participant AL as AutoConcurrencyLimiter
-    member STATS as 窗口统计
+    participant STATS as 窗口统计
 
     RPC->>AL: OnResponded(error_code, latency_us)
 
@@ -316,13 +316,13 @@ flowchart TD
     QPS --> DELTA_QPS[delta_qps = current_qps - last_qps]
     DELTA_QPS --> DELTA_LAT[delta_lat = current_avg_lat - last_avg_lat]
 
-    DELTA_LAT --> GRADIENT[梯度计算:<br/>gradient = delta_qps / delta_latency]
+    DELTA_LAT --> GRADIENT["梯度计算: gradient = delta_qps / delta_latency"]
     GRADIENT --> STEP[max += gradient * step_size]
 
-    STEP --> CLAMP[边界裁剪:<br/>max = clamp(max, min_concurrency, max_limit)]
+    STEP --> CLAMP["边界裁剪: max = clamp(max, min_concurrency, max_limit)"]
 
     CLAMP --> NOLOAD{无负载检测:<br/>qps 接近 0?}
-    NOLOAD -->|是| REMEASURE[启动无负载重测<br/>设置 noload_remeasure_start]
+    NOLOAD -->|是| REMEASURE["启动无负载重测, 设置 noload_remeasure_start"]
     NOLOAD -->|否| UPDATE[更新 last_qps, last_avg_lat]
     REMEASURE --> UPDATE
 
@@ -366,8 +366,8 @@ flowchart TD
     LAT --> AVG[更新 avg_latency]
 
     AVG --> THRESH{avg_latency > timeout * safety_ratio?}
-    THRESH -->|是| REDUCE[max_concurrency = min(max, current)<br/>收缩上限]
-    THRESH -->|否| GROW[缓慢增长 max_concurrency<br/>+1 per window]
+    THRESH -->|是| REDUCE["max_concurrency = min(max, current), 收缩上限"]
+    THRESH -->|否| GROW["缓慢增长 max_concurrency, +1 per window"]
     REDUCE --> DEC[当前并发 -1]
     GROW --> DEC
 ```
@@ -694,7 +694,7 @@ sequenceDiagram
     participant CLI as 客户端
     participant NET as 网络
     participant SOCK as 服务端 Socket
-    member PROTO as 协议处理器
+    participant PROTO as 协议处理器
     participant CL as ConcurrencyLimiter
     participant SVC as Service
 
