@@ -499,7 +499,7 @@ brpc Stream 使用**信用量（Credit）反馈**控制消息流：
 sequenceDiagram
     participant SENDER as 发送端
     participant RECEIVER as 接收端
-    member BUF as 接收缓冲区<br/>（min 1MB, max 2MB）
+    participant BUF as 接收缓冲区（1-2MB）
 
     Note over SENDER,RECEIVER: 初始 Credit = 1MB
 
