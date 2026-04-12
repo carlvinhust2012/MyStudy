@@ -537,7 +537,7 @@ sequenceDiagram
     participant IOBUF as IOBuf
     participant INMSG as InputMessenger
     participant PROTO as Protocol
-    as CNTL as Controller
+    participant CNTL as Controller
 
     SOCK->>SOCK: EPOLLIN → OnNewMessages()
     SOCK->>IOBUF: readv() 追加数据
@@ -816,17 +816,17 @@ graph TB
 
 ```mermaid
 stateDiagram-v2
-    [*] --> CONNECTING: Socket::Create()
-    CONNECTING --> CONNECTED: connect() 成功
-    CONNECTED --> IDLE: 无在途 RPC
-    IDLE --> CONNECTED: 新 RPC 发送
-    CONNECTED --> FAILED: I/O 错误 / 超时
-    FAILED --> CONNECTING: 自动重连
-    CONNECTED --> CLOSED: Socket::SetFailed() + refcnt==0
+    [*] --> CONNECTING : Socket.Create()
+    CONNECTING --> CONNECTED : connect() 成功
+    CONNECTED --> IDLE : 无在途 RPC
+    IDLE --> CONNECTED : 新 RPC 发送
+    CONNECTED --> FAILED : I/O 错误 / 超时
+    FAILED --> CONNECTING : 自动重连
+    CONNECTED --> CLOSED : Socket.SetFailed() + refcnt==0
 
-    IDLE --> HC_CHECK: 健康检查超时
-    HC_CHECK --> FAILED: 探测失败
-    HC_CHECK --> IDLE: 探测成功
+    IDLE --> HC_CHECK : 健康检查超时
+    HC_CHECK --> FAILED : 探测失败
+    HC_CHECK --> IDLE : 探测成功
 ```
 
 ### 11.3 健康检查
