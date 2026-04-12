@@ -393,7 +393,7 @@ sequenceDiagram
     participant IOBUF as IOBuf
     participant INMSG as InputMessenger
     participant PROTO as Protocol
-    as InputMsg as InputMessageBase
+    participant InputMsg as InputMessageBase
     participant ALLOC as 对象池分配
     participant PROC as Protocol::ProcessRequest
     participant BTH as bthread（处理协程）
