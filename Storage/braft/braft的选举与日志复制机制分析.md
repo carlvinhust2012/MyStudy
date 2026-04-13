@@ -28,7 +28,7 @@
 
 ## 1. braft 概述
 
-braft 是百度开源的 Raft 一致性算法实现（基于 [brpc](https://github.com/apache/incubator-brpc)），用于 CDS、百度内部多个分布式系统。核心特性：
+braft 是百度开源的 Raft 一致性算法实现（基于 [brpc](https://github.com/apache/incubator-brpc)），用于百度内部多个分布式系统。核心特性：
 
 | 特性 | 说明 |
 |------|------|
