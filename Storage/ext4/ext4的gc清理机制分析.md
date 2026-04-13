@@ -357,14 +357,12 @@ sequenceDiagram
         alt link count == 0
             Ext4->>Ext4: 释放所有数据块
             Ext4->>Ext4: 释放 inode
-        elseif 无目录项引用
+        else 无目录项引用
             Ext4->>Ext4: 截断文件为 0 大小
             Ext4->>Ext4: 释放数据块和 inode
-        elseif 文件过大（崩溃中断）
+        else 文件过大（崩溃中断）
             Ext4->>Ext4: 截断到实际分配大小
             Ext4->>Ext4: 释放多余数据块
-        else 文件状态正常
-            Ext4->>Ext4: 保留 inode（跳过）
         end
     end
 
