@@ -2,28 +2,28 @@
 
 ## 1. 一句话概括
 
-NCCL（NVIDIA Collective Communications Library）是一个用于多 GPU 集体通信的库，采用「组提交 → 算法选择 → 通道并行 → GPU 内核 + Proxy 线程协同」的架构，通过 Ring/Tree/NVLS/CollNet 等拓扑算法和 P2P/SHM/NET 三级传输层，实现跨 GPU 和跨节点的高效数据交换。
+NCCL 是一个用于多 GPU 集体通信的库，采用组提交加算法选择加通道并行加 GPU 内核与 Proxy 线程协同的架构，通过 Ring/Tree/NVLS/CollNet 等拓扑算法和 P2P/SHM/NET 三级传输层，实现跨 GPU 和跨节点的高效数据交换。
 
 ## 2. 整体架构
 
 ```mermaid
 graph TB
-    User["用户 API\nncclAllReduce / ncclSend / ..."]
-    Enqueue["Enqueue 层\nncclEnqueueCheck / Group 机制"]
-    Plan["规划层\n算法选择 + 通道分配"]
-    Kernel["GPU Kernel\nncclKernelMain\nPrimitives (LL/LL128/Simple)"]
-    Proxy["Proxy 线程\n数据搬运 (SHM/NET)"]
-    Trans["传输层\nP2P / SHM / NET / CollNet"]
+    User["用户 API"]
+    Enqueue["Enqueue 层"]
+    Plan["规划层"]
+    Kernel["GPU Kernel"]
+    Proxy["Proxy 线程"]
+    Trans["传输层"]
 
     User --> Enqueue --> Plan --> Kernel
     Kernel -->|"FIFO head/tail 信号"| Proxy
     Proxy --> Trans
 
-    subgraph "传输优先级"
-        P2P["P2P (NVLink/IPC)"]
-        SHM["SHM (共享内存)"]
-        NET["NET (IB/RoCE)"]
-        Coll["CollNet (SHARP)"]
+    subgraph 传输优先级
+        P2P["P2P"]
+        SHM["SHM"]
+        NET["NET"]
+        Coll["CollNet"]
         P2P --> SHM --> NET --> Coll
     end
 
@@ -73,39 +73,41 @@ sequenceDiagram
     participant Trans as initTransportsRank
     participant Topo as 拓扑系统
 
-    U->>Init: ncclCommInitRank(comm, nranks, id, rank)
-    Init->>Init: ncclInit() [一次性: bootstrap, GDRCopy]
-    Init->>Alloc: 分配 comm, 设置 rank/nRanks/magic
-    Init->>Async: ncclAsyncLaunch(ncclCommInitRankFunc)
+    U->>Init: ncclCommInitRank
+    Init->>Init: ncclInit 初始化 bootstrap 和 GDRCopy
+    Init->>Alloc: 分配 comm 设置 rank 和 magic
+    Init->>Async: ncclAsyncLaunch
 
-    Async->>Async: cudaSetDevice, 加载 PTX kernels
-    Async->>Alloc: commAlloc(comm)
-    Note over Alloc: 创建 SharedResources; ncclNetInit, ncclGinInit; ncclMemManagerInit; channel[].id = -1
+    Async->>Async: cudaSetDevice 加载 PTX kernels
+    Async->>Alloc: commAlloc
+    Note over Alloc: 创建 SharedResources 并初始化
 
-    Async->>Boot: bootstrapInit()
-    Note over Boot: 创建监听 socket; 发送 extInfo 到 root; 从 root 获取邻居连接信息; 建立 ring 连接 (TCP/Net); ringAllInfo: AllGather 所有 peer 地址; ncclProxyInit
+    Async->>Boot: bootstrapInit
+    Note over Boot: 创建监听 socket 并发送 extInfo 到 root
+    Note over Boot: 获取邻居连接信息并建立 bootstrap ring
+    Note over Boot: ringAllInfo 分发所有 peer 地址
 
-    Async->>Trans: initTransportsRank()
-    Note over Trans: AllGather #1: 交换 peerInfo
+    Async->>Trans: initTransportsRank
+    Note over Trans: AllGather 交换 peerInfo
     Note over Trans: 计算拓扑路径
-    Async->>Topo: ncclTopoGetSystem → ComputePaths → Trim
-    Note over Trans: AllGather #3: 交换拓扑图 + rank
-    Note over Trans: ncclTopoPostset: 填充 ring/tree 数据
-    Note over Trans: computeBuffSizes: 计算 LL/LL128/Simple 缓冲区
+    Async->>Topo: ncclTopoGetSystem
+    Note over Trans: AllGather 交换拓扑图和 rank
+    Note over Trans: ncclTopoPostset 填充 ring 和 tree 数据
+    Note over Trans: computeBuffSizes 计算缓冲区大小
 
-    Note over Trans: ncclProxyCreate: 启动 Proxy 线程
-    Note over Trans: ncclP2pSchedule: 构建 P2P 调度
-    Note over Trans: setupChannel × nChannels: 初始化每个通道
-    Note over Trans: ncclTransportRingConnect: 连接环拓扑
-    Note over Trans: ncclTransportTreeConnect: 连接树拓扑
-    Note over Trans: ncclTransportPatConnect: 连接 PAT
-    Note over Trans: ncclNvlsSetup + nvlsTreeConnect: NVLS
-    Note over Trans: ncclCollNetSetup: CollNet
-    Note over Trans: ncclTopoTuneModel: 性能调优
-    Note over Trans: devCommSetup: 创建 GPU 端 comm 镜像
-    Note over Trans: bootstrapIntraNodeBarrier: 节点内同步
+    Note over Trans: ncclProxyCreate 启动 Proxy 线程
+    Note over Trans: ncclP2pSchedule 构建 P2P 调度
+    Note over Trans: setupChannel 初始化每个通道
+    Note over Trans: ncclTransportRingConnect 连接环拓扑
+    Note over Trans: ncclTransportTreeConnect 连接树拓扑
+    Note over Trans: ncclTransportPatConnect 连接 PAT
+    Note over Trans: ncclNvlsSetup 建立 NVLS
+    Note over Trans: ncclCollNetSetup 建立 CollNet
+    Note over Trans: ncclTopoTuneModel 性能调优
+    Note over Trans: devCommSetup 创建 GPU 端 comm 镜像
+    Note over Trans: bootstrapIntraNodeBarrier 节点内同步
 
-    Async-->>Init: comm->initState = ncclSuccess
+    Async-->>Init: comm 初始化完成
 ```
 
 ### 4.1 Bootstrap 协议
@@ -136,48 +138,49 @@ sequenceDiagram
     participant GPU as GPU Kernel
     participant PX as Proxy 线程
 
-    U->>Enq: ncclAllReduce(sendbuf, recvbuf, count, ..., comm, stream)
-    Note over Enq: 构建 ncclInfo{func=AllReduce, ...}
-    Enq->>Enq: ncclGroupStartInternal() → ncclGroupDepth++ (0→1)
-    Enq->>Enq: ncclCommEnsureReady(comm)
-    Enq->>Task: taskAppend(comm, info)
+    U->>Enq: ncclAllReduce
+    Note over Enq: 构建 ncclInfo
+    Enq->>Enq: ncclGroupStartInternal
+    Enq->>Enq: ncclCommEnsureReady
+    Enq->>Task: taskAppend
 
-    Note over Task: nRanks>1, 非 CE, 非 AlltoAll
-    Task->>Task: collTaskAppend(comm, info)
-    Note over Task: 分配 ncclTaskColl, 插入 size-descending 排序器, ncclGroupCommJoin(comm)
+    Note over Task: nRanks 大于 1 且非 CE
+    Task->>Task: collTaskAppend
+    Note over Task: 分配 ncclTaskColl 并插入排序器
 
-    Enq->>GE: ncclGroupEndInternal()
-    Note over GE: --ncclGroupDepth (1→0) → 触发执行
+    Enq->>GE: ncclGroupEndInternal
+    Note over GE: 触发执行
 
-    GE->>GL: groupLaunch()
+    GE->>GL: groupLaunch
     Note over GL: 发起 P2P preconnect 异步任务
 
-    GL->>Prep: ncclPrepareTasks(comm)
-    Note over Prep: 从排序器取出任务（大优先）; 按 (func,op,datatype) 分组聚合
-    Note over Prep: ncclGetAlgoInfo() → 选择算法和协议
+    GL->>Prep: ncclPrepareTasks
+    Note over Prep: 取出任务并按 func 和 datatype 分组
+    Note over Prep: ncclGetAlgoInfo 选择算法和协议
     Note over Prep: 构建 ncclDevWorkColl 工作描述符
 
-    GL->>Launch: doLaunches(commHead)
-    Note over Launch: 按 clique（共享 intraComm0 的 comm 组）迭代
-    Note over Launch: ncclLaunchPrepare(comm) → 构建 kernel plan
+    GL->>Launch: doLaunches
+    Note over Launch: 按 clique 迭代
+    Note over Launch: ncclLaunchPrepare 构建 kernel plan
 
-    Launch->>GPU: ncclLaunchKernel(comm, plan)
-    Note over GPU: 每个 channel 启动 1 个 CUDA block; ncclKernelMain(blockIdx → channelId); RunWorkColl: 创建 Primitives; 循环: send/recv/recvReduceSend ...
+    Launch->>GPU: ncclLaunchKernel
+    Note over GPU: 每个 channel 启动 1 个 CUDA block
+    Note over GPU: RunWorkColl 创建 Primitives 并循环执行
 
-    Note over GPU: 数据写入 conn.buffs[proto], 更新 conn.head/tail 信号
+    Note over GPU: 数据写入 FIFO 并更新 head/tail
 
-    GPU-->>PX: FIFO 信号（head/tail 计数器）
+    GPU-->>PX: FIFO 信号
     Note over PX: progressOps 循环
-    Note over PX: op->progress() → transport->proxyProgress()
+    Note over PX: op progress 调用 transport proxyProgress
 
     alt P2P 直连
-        Note over PX: 无需搬运，对端 GPU 直接读取
+        Note over PX: 无需搬运对端直接读取
     else SHM
-        Note over PX: cudaMemcpyAsync(D2H/H2D)
-    else NET (GDRDMA)
-        Note over PX: ncclNet->isend/irecv + test
-    else NET (非 GDR)
-        Note over PX: GPU→Host 拷贝 → ncclNet->isend/irecv
+        Note over PX: cudaMemcpyAsync
+    else NET GDRDMA
+        Note over PX: ncclNet isend irecv
+    else NET 非 GDR
+        Note over PX: GPU 到 Host 拷贝后网络发送
     end
 ```
 
@@ -208,16 +211,16 @@ sequenceDiagram
     participant U as 用户线程
     participant G as 线程本地状态
 
-    U->>G: ncclGroupStart()
-    Note over G: ncclGroupDepth = 0 → 1
+    U->>G: ncclGroupStart
+    Note over G: ncclGroupDepth 递增
 
-    U->>G: ncclAllReduce(comm1, ...)  → taskAppend, 不执行
-    U->>G: ncclAllReduce(comm2, ...)  → taskAppend, 不执行
-    U->>G: ncclBroadcast(comm1, ...)  → taskAppend, 不执行
+    U->>G: ncclAllReduce comm1 不执行
+    U->>G: ncclAllReduce comm2 不执行
+    U->>G: ncclBroadcast comm1 不执行
 
-    U->>G: ncclGroupEnd()
-    Note over G: ncclGroupDepth = 1 → 0 → 触发 groupLaunch
-    Note over G: 所有 comm 的任务一起提交，最大化并行度
+    U->>G: ncclGroupEnd
+    Note over G: ncclGroupDepth 归零触发 groupLaunch
+    Note over G: 所有任务一起提交最大化并行度
 ```
 
 - 单独调用集合 API（不在 Group 内）会隐式包装为 depth 0→1→0 的 Group
@@ -274,22 +277,22 @@ Phase 2: All-Gather (3 步，沿环 copy-forward)
 
 ```mermaid
 graph LR
-    subgraph "CUDA Launch"
+    subgraph CUDA Launch
         K["ncclKernelMain"]
-        B0["Block 0, Channel 0"]
-        B1["Block 1, Channel 1"]
-        BN["Block N, Channel N"]
+        B0["Block 0 Channel 0"]
+        B1["Block 1 Channel 1"]
+        BN["Block N Channel N"]
         K --> B0
         K --> B1
         K --> BN
     end
 
-    subgraph "每个 Block"
+    subgraph 每个 Block
         S1["加载 ncclKernelComm 到 shared memory"]
         S2["加载 ncclDevChannel 到 shared memory"]
         S3["从 args 加载 work batch"]
-        S4["RunWorkBatch: 创建 Primitives"]
-        S5["循环: send/recv/recvReduceSend"]
+        S4["RunWorkBatch 创建 Primitives"]
+        S5["循环 send recv recvReduceSend"]
         S1 --> S2 --> S3 --> S4 --> S5
     end
 ```
@@ -300,23 +303,11 @@ graph LR
 
 ### 7.2 三种设备端协议
 
-```
-╔══════════════════╦══════════════════════════════════════════════════════════╗
-║ ProtoSimple      ║ FIFO + head/tail 计数器同步                              ║
-║                  ║ 发送方: 写数据到 buffs[SIMPLE] → 更新 tail               ║
-║                  ║ 接收方: 轮询 tail → 读数据 → 更新 head                   ║
-║                  ║ 支持 Direct 模式: 跳过缓冲区，直接写到对端输出地址         ║
-╠══════════════════╬══════════════════════════════════════════════════════════╣
-║ ProtoLL          ║ Flag-word 协议: 每 16B = 8B data + 8B flag              ║
-║                  ║ flag 是单调递增计数器 (step+1)                             ║
-║                  ║ 接收方: 轮询 flag 直到匹配期望值                          ║
-║                  ║ 写入方: __threadfence_system() 保证全局可见               ║
-╠══════════════════╬══════════════════════════════════════════════════════════╣
-║ ProtoLL128       ║ 128-bit line: 紧凑打包 + 末尾 flag                       ║
-║                  ║ 专用 flag 线程 (tid%WARP_SIZE == FLAGTHREAD)              ║
-║                  ║ 两阶段加载/存储: Begin 隐藏 shuffle 延迟                   ║
-╚══════════════════╩══════════════════════════════════════════════════════════╝
-```
+| 协议 | 同步方式 | 特点 |
+|------|---------|------|
+| ProtoSimple | FIFO 缓冲区 + head/tail 计数器 | 发送方写数据更新 tail，接收方轮询 tail 读数据更新 head。支持 Direct 模式直接写对端输出地址（零拷贝） |
+| ProtoLL | 每 16B 含 8B data + 8B flag | flag 是单调递增计数器（step+1），接收方轮询 flag 直到匹配期望值，写入方用 `__threadfence_system()` 保证全局可见 |
+| ProtoLL128 | 128-bit line 末尾 flag | 紧凑打包数据，专用 flag 线程（tid%WARP_SIZE == FLAGTHREAD），两阶段加载/存储隐藏 shuffle 延迟 |
 
 ### 7.3 Primitives 操作
 
@@ -338,18 +329,18 @@ Primitives 模板类提供统一的 send/recv/reduce 接口：
 
 ```mermaid
 graph TB
-    subgraph "Proxy 子系统"
-        ST["Service Thread (服务线程)"]
-        PT["Progress Thread (推进线程)"]
-        Pool["opsPool (共享内存操作池)"]
+    subgraph Proxy 子系统
+        ST["Service Thread 服务线程"]
+        PT["Progress Thread 推进线程"]
+        Pool["opsPool 共享内存操作池"]
 
-        ST -->|"处理连接消息 (Setup/Connect/Register)"| Pool
-        PT -->|"消费操作, 驱动传输"| Pool
+        ST -->|"处理连接消息"| Pool
+        PT -->|"消费操作驱动传输"| Pool
     end
 
-    Main["主线程 (GPU kernel 提交者)"]
-    Main -->|"ncclProxySaveOp: 写入 op 到 pool"| Pool
-    Main -->|"ncclProxyStart: 通知 cond var"| PT
+    Main["主线程 GPU kernel 提交者"]
+    Main -->|"ncclProxySaveOp 写入 op"| Pool
+    Main -->|"ncclProxyStart 通知"| PT
 ```
 
 **Service Thread（服务线程）：**
@@ -370,32 +361,31 @@ sequenceDiagram
     participant GPU as GPU Kernel
     participant FIFO as FIFO 缓冲区
     participant PX as Proxy 线程
-    participant NIC as NIC / 网络
+    participant NIC as NIC
     participant Remote as 远端 GPU
 
-    Note over GPU: Primitives.send(): 写数据到 FIFO
-    GPU->>FIFO: 数据写入 conn.buffs[proto]
-    GPU->>FIFO: 更新 conn.tail (信号)
+    Note over GPU: Primitives send 写数据到 FIFO
+    GPU->>FIFO: 数据写入 conn.buffs
+    GPU->>FIFO: 更新 conn.tail
 
     Note over PX: progressOps 循环检测到 tail 变化
 
-    alt P2P Direct (NVLink/IPC)
+    alt P2P Direct
         Note over PX: 无需搬运
-        FIFO-->>Remote: 对端 GPU 直接通过 NVLink/IPC 读取 FIFO
+        FIFO-->>Remote: 对端 GPU 直接读取
     else SHM
-        PX->>FIFO: cudaMemcpyAsync(D2H)
+        PX->>FIFO: cudaMemcpyAsync D2H
         PX->>FIFO: 记录 CUDA event
-        PX->>FIFO: 检查 event 完成后更新 SHM tail
-        Note over Remote: 对端 Proxy 检测到 SHM tail 变化
-        Remote->>Remote: cudaMemcpyAsync(H2D)
-    else NET (GDRDMA)
+        Note over Remote: 对端 Proxy 检测到变化
+        Remote->>Remote: cudaMemcpyAsync H2D
+    else NET GDRDMA
         Note over FIFO: GPU 内存通过 DMA-BUF 注册到 NIC
-        PX->>NIC: ncclNet->isend(注册的 GPU 内存)
+        PX->>NIC: ncclNet isend
         NIC->>Remote: RDMA 传输
-        Note over Remote: 远端 Proxy ncclNet->irecv + test
-    else NET (非 GDR)
-        PX->>FIFO: cudaMemcpy(D2H) 到 staging buffer
-        PX->>NIC: ncclNet->isend(staging buffer)
+        Note over Remote: 远端 Proxy irecv test
+    else NET 非 GDR
+        PX->>FIFO: cudaMemcpy D2H 到 staging
+        PX->>NIC: ncclNet isend
         NIC->>Remote: 网络传输
     end
 ```
@@ -450,33 +440,33 @@ selectTransport() 按优先级遍历:
 ```mermaid
 sequenceDiagram
     participant Main as 主线程
-    participant PX as Proxy 线程 (本地)
+    participant PX as Proxy 线程
     participant Remote as 远端
     participant Rpx as 远端 Proxy
 
-    Main->>Main: selectTransport() → 选择 P2P/SHM/NET
-    Main->>Main: transport->send/recv.setup() → 分配资源, 获取连接信息
-    Main->>Remote: bootstrapSend/Recv() → 交换连接信息
+    Main->>Main: selectTransport 选择传输方式
+    Main->>Main: transport setup 分配资源
+    Main->>Remote: bootstrapSend 交换连接信息
 
-    Main->>PX: ncclProxyCallBlocking(ncclProxyMsgSetup)
-    Note over PX: transport->proxySetup() → 在 Proxy 中分配缓冲区
+    Main->>PX: ncclProxyCallBlocking Setup
+    Note over PX: transport proxySetup 分配缓冲区
 
-    Main->>PX: ncclProxyCallBlocking/Async(ncclProxyMsgConnect)
+    Main->>PX: ncclProxyCallBlocking Connect
 
     alt NET 传输
-        PX->>Rpx: ncclNet->connect() / listen() + accept()
-        Note over PX: 分配/注册内存 (DMA-BUF)
+        PX->>Rpx: ncclNet connect listen accept
+        Note over PX: 分配注册内存
         Rpx-->>PX: 连接建立
     else P2P 传输
-        Note over PX: p2pMap() → CUDA IPC open / cuMem import
-        Note over PX: 设置 conn.tail/head/connFifo
+        Note over PX: p2pMap 导入远程内存
+        Note over PX: 设置 tail 和 head 和 connFifo
     else SHM 传输
-        Note over PX: shmOpen + mmap 导入远程 SHM
-        Note over PX: 设置 conn.buffs 地址
+        Note over PX: shmOpen mmap 导入远程 SHM
+        Note over PX: 设置 buffs 地址
     end
 
     PX-->>Main: 返回连接完成
-    Main->>Main: cudaMemcpy H2D → 将连接信息复制到 GPU 端 ncclDevChannel
+    Main->>Main: cudaMemcpy H2D 复制连接信息到 GPU
 ```
 
 ## 10. Send/Recv (P2P) 流程
@@ -489,25 +479,25 @@ sequenceDiagram
     participant FIFO as FIFO
     participant PX as Proxy
 
-    U->>Enq: ncclSend(buf, count, datatype, peer, comm, stream)
-    Note over Enq: info.coll = ncclFuncSend
+    U->>Enq: ncclSend
+    Note over Enq: info.coll 设置为 Send
 
-    U->>Enq: ncclRecv(buf, count, datatype, peer, comm, stream)
-    Note over Enq: info.coll = ncclFuncRecv
+    U->>Enq: ncclRecv
+    Note over Enq: info.coll 设置为 Recv
 
-    Enq->>Enq: taskAppend → p2pTaskAppend, 按通道切分数据
+    Enq->>Enq: taskAppend 按通道切分数据
 
-    Note over GPU: ncclKernelMain; Warp 0: 按通道分配数据片
+    Note over GPU: ncclKernelMain 中按通道分配数据片
     Note over GPU: 分为 send warps 和 recv warps
 
-    Note over GPU: runSend(): Primitives.directSend(cursor, cursor, n), 写 FIFO, 更新 tail
-    Note over GPU: runRecv(): Primitives.directRecv(cursor, n), 轮询 FIFO, 更新 head
+    Note over GPU: runSend 执行 Primitives directSend
+    Note over GPU: runRecv 执行 Primitives directRecv
 
-    GPU->>FIFO: 数据写入 / 读取
+    GPU->>FIFO: 数据写入或读取
     FIFO-->>PX: head/tail 信号变化
     Note over PX: 驱动传输层搬运数据
 
-    Note over GPU: sendRank == rank 时: 本地 reduceCopy（自优化）
+    Note over GPU: sendRank 等于 rank 时本地 reduceCopy
 ```
 
 - Send/Recv 以 `uint8_t` 为单位操作（`static_assert(sizeof(T)==1)`）
@@ -523,24 +513,21 @@ sequenceDiagram
     participant D as ncclCommDestroy
     participant R as commReclaim
 
-    U->>D: ncclCommDestroy(comm)
-    D->>D: ncclGroupStartInternal()
-    D->>D: ncclCommEnsureReady(comm)
-    D->>D: comm->destroyFlag = 1
-    D->>R: ncclAsyncLaunch(commReclaim)
+    U->>D: ncclCommDestroy
+    D->>D: ncclGroupStartInternal
+    D->>D: ncclCommEnsureReady
+    D->>D: 设置 destroyFlag
+    D->>R: ncclAsyncLaunch
 
     Note over R: 原子递增 finalizeRankCnt
-    Note over R: 当 intraComm0 的最后一个 rank:
+    Note over R: 当 intraComm0 的最后一个 rank
     R->>R: 遍历所有 intra comms
-    Note over R: commDestroySync(): 同步 stream, 停止 proxy
-    Note over R: commCleanup(): commFree + tuner finalize
-    Note over R: commFree():
-    Note over R:   释放 channels, shared resources
-    Note over R:   关闭传输连接
-    Note over R:   bootstrapClose
-    Note over R:   加入 proxy 线程
-    Note over R:   销毁内存管理器, CUDA 内存池
-    Note over R:   commPoison 防止复用
+    Note over R: commDestroySync 同步 stream 停止 proxy
+    Note over R: commCleanup 执行 commFree 和 tuner finalize
+    Note over R: commFree 释放 channels 和 shared resources
+    Note over R: 关闭传输连接并 bootstrapClose
+    Note over R: 加入 proxy 线程并销毁内存管理器
+    Note over R: commPoison 防止复用
 ```
 
 ## 12. 源码索引
