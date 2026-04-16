@@ -250,7 +250,7 @@ sequenceDiagram
     Note over G0,G3: Ring: 0 → 1 → 2 → 3 → 0
 
     rect rgb(255, 245, 220)
-        Note over G0,G3,NL: Step 1: 每个 GPU 向 next 发送一个 chunk
+        Note over G0,G3: Step 1: 每个 GPU 向 next 发送一个 chunk
 
         G0->>G1: P2P 写入 chunk A2 (NVLink 直接写 GPU 1 显存)
         G1->>G2: P2P 写入 chunk B3 (NVLink 直接写 GPU 2 显存)
@@ -264,7 +264,7 @@ sequenceDiagram
     end
 
     rect rgb(220, 240, 255)
-        Note over G0,G3,NL: Step 2: 发送 Reduce 后的结果
+        Note over G0,G3: Step 2: 发送 Reduce 后的结果
 
         G0->>G1: P2P 写入 (A1+D1) → GPU 1
         G1->>G2: P2P 写入 (B2+A2) → GPU 2
@@ -278,7 +278,7 @@ sequenceDiagram
     end
 
     rect rgb(220, 255, 220)
-        Note over G0,G3,NL: Step 3: 最终 Reduce
+        Note over G0,G3: Step 3: 最终 Reduce
 
         G0->>G1: P2P 写入 (A0+D0+C0) → GPU 1
         G1->>G2: P2P 写入 (B1+A1+D1) → GPU 2
