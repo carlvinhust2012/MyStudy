@@ -81,7 +81,7 @@ WAL 设备 (NVMe SSD):
 sequenceDiagram
     participant OSD as OSD 启动
     participant Disk as WAL 设备 (NVMe)
-    member Verify as 校验器
+    participant Verify as 校验器
 
     OSD->>Disk: 从偏移 0x1000 读取 Superblock
     Disk-->>OSD: 返回原始数据
