@@ -305,7 +305,7 @@ sequenceDiagram
     participant ZFS as ZFS SPA
     participant ZIL as ZIL/SLOG
     participant TXG as TXG
-    member Disk as 物理磁盘
+    participant Disk as 物理磁盘
 
     Client->>Net: SCSI WRITE(10/16) PDU
     Net->>SCST: iSCSI 协议解析
@@ -347,7 +347,7 @@ sequenceDiagram
     participant SCST as SCST (内核)
     participant ZVOL as zvol 块设备
     participant ARC as ARC
-    member Disk as 物理磁盘
+    participant Disk as 物理磁盘
 
     Client->>Net: SCSI READ(10/16) PDU
     Net->>SCST: iSCSI 协议解析
