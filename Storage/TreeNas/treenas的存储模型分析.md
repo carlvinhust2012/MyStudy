@@ -748,14 +748,7 @@ sequenceDiagram
 
     Note over UI,Event: === 创建复制任务 ===
 
-    UI->>Repl: replication.create({
-        name, direction: "PUSH",
-        transport: "SSH",
-        source_datasets: ["tank/data"],
-        target_dataset: "backup/data",
-        periodic_snapshot_tasks: [1,2],
-        encryption_key, ...
-    })
+    UI->>Repl: replication.create({name, direction, transport, source_datasets, target_dataset, ...})
 
     Repl->>Repl: _validate()
     Note right of Repl: PUSH: 需要 snapshot task 或 naming_schema | SSH: 验证凭证 | 加密: 验证密钥格式/位置 | 全量复制: 需递归+属性同步
