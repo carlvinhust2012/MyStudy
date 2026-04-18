@@ -178,9 +178,10 @@ sequenceDiagram
 
     VFS->>EXT: ext4_lookup(root_inode, "a")
     EXT->>EXT: ext4_htree_lookup(root_inode, "a")
-    Note right of EXT: 如果目录启用了 dir_index (htree),<br>先用 hash 查找; 否则线性扫描目录块
+    Note right of EXT: 如果启用了 dir_index/htree 则用 hash 查找
+    Note right of EXT: 否则线性扫描目录块
     EXT->>DB: 读取 root 目录的数据块
-    Note right of DB: 遍历 dir entry 结构:<br>inode号 + rec_len + name_len + name
+    Note right of DB: 遍历 dir entry 结构: inode号 + rec_len + name_len + name
 
     alt 找到 "a"
         DB-->>EXT: inode_a = 12837
@@ -256,8 +257,8 @@ sequenceDiagram
 
     EXT->>EXT: ext4_new_inode(dir_inode=/a/b)
     EXT->>EXT: 选择目标 Block Group (分配策略):
-    Note right of EXT: 1. 优先在父目录所在 Group (局部性)
-    Note right of EXT: 2. Free inodes < 高低水位 则跳到其他 Group
+    Note right of EXT: 1. 优先在父目录所在 Group 以获得局部性
+    Note right of EXT: 2. Free inodes 低于高低水位则跳到其他 Group
     Note right of EXT: 3. Orlov 算法: 防止目录树扎堆在同一 Group
     EXT->>GDT: 读取目标 Group Descriptor
     EXT->>IBMP: 读取 Inode Bitmap
@@ -269,11 +270,11 @@ sequenceDiagram
     Note over EXT,Disk: Step 2: 初始化 inode
 
     EXT->>IT: 在 Inode Table 中写入 inode_c:
-    Note right of IT: i_mode = S_IFREG | 0644 (普通文件)
-    Note right of IT: i_size = 0 (初始大小)
+    Note right of IT: i_mode = S_IFREG | 0644 普通文件
+    Note right of IT: i_size = 0 初始大小
     Note right of IT: i_links_count = 1
-    Note right of IT: i_flags = EXT4_EXTENTS_FL (启用 extent)
-    Note right of IT: i_block[0..14] = 空 (无 extent)
+    Note right of IT: i_flags = EXT4_EXTENTS_FL 启用 extent
+    Note right of IT: i_block[0..14] = 空 无 extent
     EXT->>JBD2: journal inode 初始化
 
     Note over EXT,Disk: Step 3: 添加目录项
@@ -362,17 +363,19 @@ sequenceDiagram
     Note over EXT,MB: Step 2: 块分配请求
 
     EXT->>MB: ext4_mb_new_blocks(inode_c, len=2048)
-    Note right of EXT: 首次分配请求 2048 块 (8MB, prefetch)
+    Note right of EXT: 首次分配请求 2048 块即 8MB prefetch
 
     Note over MB,Disk: Step 3: mballoc 分配算法
 
     MB->>MB: ext4_mb_regular_allocator():
-    Note right of MB: 1. ac_criteria_type: 按 inode 的 i_block_group 定位起始 Group
+    Note right of MB: 1. 按 inode 的 i_block_group 定位起始 Group
     MB->>GDT: 检查目标 Group 的 free_blocks
     MB->>GDT: 检查相邻 Group 的 free_blocks
 
     MB->>BBT: 在 Buddy Table 中查找 len >= 2048 的 free chunk
-    Note right of BBT: Buddy System 按阶组织空闲块:<br>order 0: 1块, order 1: 2块连续<br>order 2: 4块连续, ...<br>order N: 2^N 块连续<br>需要 2048 = order 11
+    Note right of BBT: Buddy System 按阶组织空闲块
+    Note right of BBT: order 0=1块 order 1=2块 order N=2^N块
+    Note right of BBT: 需要 2048 = order 11
 
     alt 找到足够的连续空闲块 (在 Group K)
         BBT-->>MB: group=K, start=P, len=2048
@@ -457,7 +460,7 @@ sequenceDiagram
     participant PC as Page Cache (内存)
     participant FL as Flusher Thread
     participant JBD2 as JBD2
-    participant JLog as Journal<br/Blocks (磁盘)
+    participant JLog as Journal Blocks (磁盘)
     participant Disk as 数据块 (磁盘最终位置)
 
     Note over App,Disk: Step 1: 写入 Page Cache (write() 立即返回)
@@ -475,8 +478,8 @@ sequenceDiagram
     Note over FL,Disk: Step 3: 日志保护元数据
 
     FL->>JLog: 将修改的 inode, extent tree, block bitmap, 目录块
-    Note right of JLog: 写入 Journal 区 (固定在磁盘某位置)
-    Note right of JLog: 顺序写, 无需 seek, 速度快
+    Note right of JLog: 写入 Journal 区 固定在磁盘某位置
+    Note right of JLog: 顺序写 无需 seek 速度快
 
     loop 每个 dirty page (数据块)
         FL->>Disk: submit_bio → 数据块写到最终物理位置
@@ -499,10 +502,10 @@ sequenceDiagram
     Note over App,Disk: 崩溃恢复场景
 
     Note right of JLog: 如果在 Step 4 之后崩溃:
-    Note right of JLog: → 重启时重放 journal, 元数据一致
+    Note right of JLog: 重启时重放 journal 元数据一致
     Note right of JLog: 如果在 Step 4 之前崩溃:
-    Note right of JLog: → 日志中无完整 commit, 丢弃未完成事务
-    Note right of JLog: → 数据可能丢失, 但元数据一致 (无挂载错误)
+    Note right of JLog: 日志中无完整 commit 丢弃未完成事务
+    Note right of JLog: 数据可能丢失 但元数据一致 无挂载错误
 ```
 
 ### 7.1 Ext4 数据写入模式 (mount 选项)
