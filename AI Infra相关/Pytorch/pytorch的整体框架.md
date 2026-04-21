@@ -398,37 +398,38 @@ sequenceDiagram
     participant User as 用户代码
     participant Module as nn.Module
     participant Autograd as torch.autograd
-    participant Engine as AutogradEngine (C++)
+    participant Engine as AutogradEngine C++
     participant Dispatch as ATen Dispatcher
-    participant Native as Native Kernels (CPU/CUDA)
+    participant Native as Native Kernels CPU_CUDA
+    participant Optimizer as Optimizer
 
     User->>Module: model(inputs)
     loop 每一层
-        Module->>Dispatch: 调用算子 (e.g., F.linear)
-        Dispatch->>Dispatch: 提取 DispatchKey (AutogradCUDA > CUDA)
+        Module->>Dispatch: 调用算子
+        Dispatch->>Dispatch: 提取 DispatchKey
         Dispatch->>Autograd: Autograd 分发
         Autograd->>Native: 调用原生 kernel
         Native-->>Autograd: 返回输出
-        Autograd->>Autograd: 记录前向节点 (保存输入/输出用于反向)
+        Autograd->>Autograd: 记录前向节点
         Autograd-->>Dispatch: 返回带 grad_fn 的输出张量
         Dispatch-->>Module: 返回结果
     end
-    Module-->>User: 返回 logits (带计算图)
+    Module-->>User: 返回 logits
 
-    User->>Autograd: loss.backward()
+    User->>Autograd: loss.backward
     Autograd->>Engine: 启动反向传播引擎
     Engine->>Engine: 拓扑排序计算图
-    loop 从输出到输入（逆序）
-        Engine->>Autograd: 执行 Node.backward() (计算梯度)
+    loop 从输出到输入
+        Engine->>Autograd: 执行 Node.backward
         Autograd->>Dispatch: 调用梯度算子
         Dispatch->>Native: 执行梯度计算 kernel
         Native-->>Engine: 返回梯度
         Engine->>Engine: 累加梯度到 .grad
     end
-    Engine-->>User: 反向传播完成 (param.grad 已更新)
+    Engine-->>User: 反向传播完成
 
-    User->>Optim: optimizer.step()
-    Note over User,Optim: 基于 param.grad 更新参数
+    User->>Optimizer: optimizer.step
+    Note over User,Optimizer: 基于 param.grad 更新参数
 ```
 
 ### 7.2 典型训练循环
@@ -438,29 +439,29 @@ sequenceDiagram
     participant User as 用户代码
     participant DL as DataLoader
     participant Model as nn.Module
-    participant Loss as Loss Function
-    participant Opt as Optimizer
+    participant LossFn as Loss Function
+    participant Optimizer as Optimizer
     participant AG as torch.autograd
 
     loop 每个 epoch
         loop 每个 batch
             User->>DL: for batch in dataloader
-            DL-->>User: (inputs, targets)
+            DL-->>User: inputs and targets
 
-            User->>Opt: optimizer.zero_grad()
-            Note over Opt: 清零所有 param.grad
+            User->>Optimizer: optimizer.zero_grad
+            Note over Optimizer: 清零所有 param.grad
 
-            User->>Model: outputs = model(inputs)
-            Note over Model: 前向传播，构建计算图
+            User->>Model: outputs = model inputs
+            Note over Model: 前向传播
 
-            User->>Loss: loss = criterion(outputs, targets)
-            Note over Loss: 计算损失值
+            User->>LossFn: loss = criterion outputs targets
+            Note over LossFn: 计算损失值
 
-            User->>AG: loss.backward()
-            Note over AG: 反向传播，计算梯度
+            User->>AG: loss.backward
+            Note over AG: 反向传播计算梯度
 
-            User->>Opt: optimizer.step()
-            Note over Opt: 基于 param.grad 更新参数
+            User->>Optimizer: optimizer.step
+            Note over Optimizer: 基于 param.grad 更新参数
         end
     end
 ```
@@ -470,41 +471,41 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant User as 用户代码
-    participant Compile as torch.compile()
+    participant Compile as torch.compile
     participant Dynamo as torch._dynamo
-    participant FX as FX Graph
+    participant FXGraph as FX Graph
     participant Inductor as torch._inductor
     participant Triton as Triton Kernels
     participant Cache as 编译缓存
 
-    User->>Compile: compiled_model = torch.compile(model)
+    User->>Compile: compiled_model = torch.compile model
     Compile->>Dynamo: 创建 OptimizedModule 包装器
 
-    User->>Dynamo: compiled_model(inputs) [首次调用]
-    Dynamo->>Dynamo: C 扩展拦截 Python 帧 (PEP 523)
-    Dynamo->>Dynamo: 检查编译缓存 → 未命中
+    User->>Dynamo: compiled_model inputs - 首次调用
+    Dynamo->>Dynamo: C 扩展拦截 Python 帧
+    Dynamo->>Dynamo: 检查编译缓存 - 未命中
     Dynamo->>Dynamo: InstructionTranslator 符号执行字节码
     loop 逐条字节码
-        Dynamo->>FX: 记录 FX Node (call_function, call_module...)
+        Dynamo->>FXGraph: 记录 FX Node
     end
-    Note over Dynamo: 遇到 graph break → 分割子图
+    Note over Dynamo: 遇到 graph break 则分割子图
 
-    Dynamo->>FX: 生成 FX GraphModule
-    Dynamo->>Cache: 缓存编译结果 (guard 指纹)
+    Dynamo->>FXGraph: 生成 FX GraphModule
+    Dynamo->>Cache: 缓存编译结果
 
-    Dynamo->>Inductor: compile_fx(graph_module)
-    Inductor->>Inductor: 算子分解 (Decomposition)
-    Inductor->>Inductor: FX Passes (DCE, 常量折叠, 模式匹配)
-    Inductor->>Inductor: Lowering → Inductor IR
-    Inductor->>Inductor: 调度 + 内存规划
-    Inductor->>Triton: 生成 Triton GPU Kernels / C++ CPU Kernels
+    Dynamo->>Inductor: compile_fx graph_module
+    Inductor->>Inductor: 算子分解
+    Inductor->>Inductor: FX Passes
+    Inductor->>Inductor: Lowering to Inductor IR
+    Inductor->>Inductor: 调度加内存规划
+    Inductor->>Triton: 生成 Triton GPU Kernels
     Triton-->>Inductor: 编译后的 kernel
 
     Inductor-->>Dynamo: 返回编译后的可调用对象
     Dynamo-->>User: 返回输出结果
 
-    User->>Dynamo: compiled_model(inputs) [后续调用]
-    Dynamo->>Cache: 检查 guard → 命中缓存
+    User->>Dynamo: compiled_model inputs - 后续调用
+    Dynamo->>Cache: 检查 guard - 命中缓存
     Dynamo-->>User: 直接执行编译后的 kernel
 ```
 
@@ -513,86 +514,74 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant User as 用户代码
-    participant Export as torch.export.export()
-    participant Dynamo as torch._dynamo (strict模式)
-    participant FX as FX Graph
+    participant ExportAPI as torch.export.export
+    participant Dynamo as torch._dynamo strict
+    participant FXGraph as FX Graph
     participant Decompose as 算子分解
     participant EP as ExportedProgram
-    participant Inductor as torch._inductor (AOT)
-    participant PT2 as .pt2 文件
+    participant Inductor as torch._inductor AOT
+    participant PT2 as pt2 文件
 
-    User->>Export: export(model, (example_inputs,))
-    Export->>Dynamo: strict 模式跟踪
-    Dynamo->>FX: 生成 FX GraphModule (ATen 算子)
-    FX-->>Export: 归一化的 FX Graph
+    User->>ExportAPI: export model example_inputs
+    ExportAPI->>Dynamo: strict 模式跟踪
+    Dynamo->>FXGraph: 生成 FX GraphModule
+    FXGraph-->>ExportAPI: 归一化的 FX Graph
 
-    Export->>Decompose: 分解复杂算子为 ATen 原语
-    Decompose-->>Export: 分解后的图
+    ExportAPI->>Decompose: 分解复杂算子为 ATen 原语
+    Decompose-->>ExportAPI: 分解后的图
 
-    Export->>Export: 记录形状约束 (Shape Constraints)
-    Export->>Export: 生成 ExportGraphSignature (参数/缓冲区/用户输入输出)
-    Export->>EP: 创建 ExportedProgram
+    ExportAPI->>ExportAPI: 记录形状约束
+    ExportAPI->>ExportAPI: 生成 ExportGraphSignature
+    ExportAPI->>EP: 创建 ExportedProgram
 
-    Export-->>User: 返回 ExportedProgram
+    ExportAPI-->>User: 返回 ExportedProgram
 
-    User->>Inductor: aoti_compile_and_package(ep)
+    User->>Inductor: aoti_compile_and_package ep
     Inductor->>Inductor: AOT 编译为 C++ 代码
-    Inductor->>PT2: 打包为 .pt2 文件
-    PT2-->>User: .pt2 模型包
+    Inductor->>PT2: 打包为 pt2 文件
+    PT2-->>User: pt2 模型包
 
-    Note over User: 部署端:
-    User->>PT2: aoti_load_package("model.pt2")
+    Note over User: 部署端
+    User->>PT2: aoti_load_package
     PT2-->>User: 可执行模型
 ```
 
 ### 7.5 分布式数据并行训练 (DDP)
 
 ```mermaid
-sequenceDialog
-    participant G as Process Group (NCCL)
+sequenceDiagram
+    participant G as ProcessGroup NCCL
     participant R0 as Rank 0
     participant R1 as Rank 1
 
     Note over R0,R1: 初始化阶段
-    R0->>G: init_process_group(backend="nccl")
-    R1->>G: init_process_group(backend="nccl")
+    R0->>G: init_process_group
+    R1->>G: init_process_group
 
-    R0->>R0: DDP(model) → 包装 nn.Module
-    R1->>R1: DDP(model) → 包装 nn.Module
+    R0->>R0: DDP model 包装 nn.Module
+    R1->>R1: DDP model 包装 nn.Module
     Note over R0,R1: 广播参数确保一致
-    R0->>G: broadcast(params)
-    R1->>G: broadcast(params)
+    R0->>G: broadcast params
+    R1->>G: broadcast params
 
-    Note over R0,R1: 训练阶段 (每步)
-    par 前向传播
-        R0->>R0: forward(local_batch)
-        and
-        R1->>R1: forward(local_batch)
-    end
+    Note over R0,R1: 训练阶段每步
+    R0->>R0: forward local_batch
+    R1->>R1: forward local_batch
 
-    par 计算损失
-        R0->>R0: loss = criterion(output, target)
-        and
-        R1->>R1: loss = criterion(output, target)
-    end
+    R0->>R0: loss = criterion
+    R1->>R1: loss = criterion
 
-    par 反向传播
-        R0->>R0: loss.backward() → 计算本地梯度
-        and
-        R1->>R1: loss.backward() → 计算本地梯度
-    end
+    R0->>R0: loss.backward 计算本地梯度
+    R1->>R1: loss.backward 计算本地梯度
 
     Note over R0,R1: DDP 自动插入的 All-Reduce
-    R0->>G: all_reduce(gradients) [通信]
-    R1->>G: all_reduce(gradients) [通信]
+    R0->>G: all_reduce gradients
+    R1->>G: all_reduce gradients
     G-->>R0: 聚合后的全局梯度
     G-->>R1: 聚合后的全局梯度
 
-    par 更新参数
-        R0->>R0: optimizer.step() → 用全局梯度更新参数
-        and
-        R1->>R1: optimizer.step() → 用全局梯度更新参数
-    end
+    R0->>R0: optimizer.step 用全局梯度更新参数
+    R1->>R1: optimizer.step 用全局梯度更新参数
 ```
 
 ### 7.6 FSDP 全分片数据并行
@@ -601,75 +590,69 @@ sequenceDialog
 sequenceDiagram
     participant R0 as Rank 0 GPU
     participant R1 as Rank 1 GPU
-    participant NCCL as NCCL 通信
-    participant CPU as CPU offload
+    participant NCCL as NCCL Comm
+    participant CPUOffload as CPU Offload
 
     Note over R0,R1: FSDP 分片策略: 每个 rank 只保存部分参数
 
-    rect rgb(230, 240, 255)
-        Note over R0,R1: 前向传播 - All-Gather 阶段
-        R0->>NCCL: all_gather(需要的参数分片)
-        R1->>NCCL: all_gather(需要的参数分片)
-        NCCL-->>R0: 完整参数 (临时)
-        NCCL-->>R1: 完整参数 (临时)
-        R0->>R0: forward() 使用完整参数
-        R1->>R1: forward() 使用完整参数
-        R0->>R0: 丢弃不再需要的参数 (释放内存)
-        R1->>R1: 丢弃不再需要的参数 (释放内存)
-    end
+    Note over R0,R1: 前向传播 - All-Gather 阶段
+    R0->>NCCL: all_gather 需要的参数分片
+    R1->>NCCL: all_gather 需要的参数分片
+    NCCL-->>R0: 完整参数临时
+    NCCL-->>R1: 完整参数临时
+    R0->>R0: forward 使用完整参数
+    R1->>R1: forward 使用完整参数
+    R0->>R0: 丢弃不再需要的参数释放内存
+    R1->>R1: 丢弃不再需要的参数释放内存
 
-    rect rgb(255, 240, 230)
-        Note over R0,R1: 反向传播 - Reduce-Scatter 阶段
-        R0->>NCCL: all_gather(需要的参数分片) [再次收集]
-        NCCL-->>R0: 完整参数
-        R0->>R0: backward() 计算梯度
-        R0->>NCCL: reduce_scatter(梯度)
-        NCCL-->>R0: 本 rank 负责的梯度分片
-        R0->>CPU: [可选] offload 梯度到 CPU
-    end
+    Note over R0,R1: 反向传播 - Reduce-Scatter 阶段
+    R0->>NCCL: all_gather 需要的参数分片
+    NCCL-->>R0: 完整参数
+    R0->>R0: backward 计算梯度
+    R0->>NCCL: reduce_scatter 梯度
+    NCCL-->>R0: 本 rank 负责的梯度分片
+    R0->>CPUOffload: 可选 offload 梯度到 CPU
 
-    rect rgb(230, 255, 230)
-        Note over R0,R1: 优化器更新阶段
-        R0->>R0: optimizer.step() (仅更新本地分片)
-        R1->>R1: optimizer.step() (仅更新本地分片)
-    end
+    Note over R0,R1: 优化器更新阶段
+    R0->>R0: optimizer.step 仅更新本地分片
+    R1->>R1: optimizer.step 仅更新本地分片
 ```
 
 ### 7.7 ATen 分发器 (Dispatcher) 调用流程
 
 ```mermaid
 sequenceDiagram
-    participant Py as Python 算子调用
-    participant Stub as 生成的 Dispatch Stub
+    participant Py as Python Op
+    participant Stub as Dispatch Stub
     participant DKEx as DispatchKeyExtractor
-    participant Disp as Dispatcher (单例)
+    participant Disp as Dispatcher
     participant OE as OperatorEntry
     participant Table as Dispatch Table
-    participant Kernel as Kernel
+    participant KFunc as KernelFunction
 
-    Py->>Stub: torch.add(a, b)
+    Py->>Stub: torch.add a, b
     Stub->>DKEx: 从张量参数提取 DispatchKeySet
-    DKEx-->>Stub: {AutogradCUDA, CUDA, Dense}
+    DKEx-->>Stub: AutogradCUDA, CUDA, Dense
 
-    Stub->>Disp: call(op, stack, dispatch_keys)
+    Stub->>Disp: call op, stack, dispatch_keys
 
-    Disp->>OE: 查找 "aten::add" 的 OperatorEntry
+    Disp->>OE: 查找 aten::add 的 OperatorEntry
     OE->>Disp: 返回 OperatorEntry
 
-    Disp->>Disp: 选择最高优先级 key: AutogradCUDA
+    Disp->>Disp: 选择最高优先级 key AutogradCUDA
 
-    Disp->>Table: dispatch_table[AutogradCUDA]
-    Table-->>Disp: KernelFunction (Autograd kernel)
+    Disp->>Table: dispatch_table AutogradCUDA
+    Table-->>Disp: KernelFunction Autograd kernel
 
-    Disp->>Kernel: 调用 Autograd kernel
-    Kernel->>Kernel: 记录前向操作到计算图
-    Kernel->>Disp: redispatch(next_key=CUDA)
+    Disp->>KFunc: 调用 Autograd kernel
+    KFunc->>KFunc: 记录前向操作到计算图
+    KFunc->>Disp: redispatch next_key CUDA
 
-    Disp->>Table: dispatch_table[CUDA]
-    Table-->>Disp: KernelFunction (CUDA native kernel)
+    Disp->>Table: dispatch_table CUDA
+    Table-->>Disp: KernelFunction CUDA native kernel
 
-    Disp->>Kernel: 调用 CUDA kernel
-    Kernel-->>Py: 返回结果张量
+    Disp->>KFunc: 调用 CUDA kernel
+    KFunc-->>Py: 返回结果张量
 ```
 
 ### 7.8 数据加载流程
@@ -679,33 +662,29 @@ sequenceDiagram
     participant User as 训练循环
     participant DL as DataLoader
     participant Sampler as Sampler
-    MP as Multi-Process Workers
+    participant Workers as Multi-Process Workers
     participant DS as Dataset
-    Collate as Collate Fn
-    PinMem as Pin Memory
+    participant Collate as Collate Fn
+    participant PinMem as Pin Memory
 
     User->>DL: for batch in dataloader
-    DL->>Sampler: next() → 获取索引
-    Sampler-->>DL: [batch_indices]
+    DL->>Sampler: next 获取索引
+    Sampler-->>DL: batch_indices
 
-    par 并行加载数据
-        DL->>MP: 分发索引到各 worker
-        MP->>DS: worker 0: dataset[i] for i in indices_0
-        MP->>DS: worker 1: dataset[i] for i in indices_1
-        MP->>DS: worker N: dataset[i] for i in indices_N
-        DS-->>MP: 各 worker 返回 samples
-        MP-->>DL: 汇总所有 samples
-    end
+    DL->>Workers: 分发索引到各 worker
+    Workers->>DS: worker 0: dataset i for i in indices_0
+    Workers->>DS: worker 1: dataset i for i in indices_1
+    Workers->>DS: worker N: dataset i for i in indices_N
+    DS-->>Workers: 各 worker 返回 samples
+    Workers-->>DL: 汇总所有 samples
 
-    DL->>Collate: collate_fn(samples)
+    DL->>Collate: collate_fn samples
     Collate-->>DL: batched_tensors
 
-    alt GPU 训练 + pin_memory=True
-        DL->>PinMem: tensor.pin_memory()
-        PinMem-->>DL: pinned tensors
-    end
+    DL->>PinMem: tensor.pin_memory
+    PinMem-->>DL: pinned tensors
 
-    DL-->>User: 返回 batch (inputs, targets)
+    DL-->>User: 返回 batch inputs and targets
 ```
 
 ---
