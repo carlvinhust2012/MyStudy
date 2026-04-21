@@ -268,30 +268,30 @@ sequenceDiagram
 flowchart TB
     CkptSize["Checkpoint 大小"]
 
-    subgraph "大模型 Checkpoint 规模"
+    subgraph CkptModels["大模型 Checkpoint 规模"]
         D7B["7B 模型: ~28 GB"]
         D70B["70B 模型: ~280 GB"]
         D175B["175B 模型: ~700 GB"]
         D1T["1T+ 模型: ~4 TB+"]
     end
 
-    subgraph "保存开销"
+    subgraph CkptTime["保存开销"]
         Time1["28 GB -> ~30s"]
         Time2["280 GB -> ~5min"]
         Time3["700 GB -> ~15min"]
         Time4["4 TB -> ~1h+"]
     end
 
-    subgraph "痛点"
+    subgraph CkptPain["痛点"]
         P1["写入时间长\nGPU 空闲等待"]
         P2["存储空间占用大\n频繁 ckpt 需要数 TB"]
         P3["恢复延迟高\n从 ckpt 恢复需要重新加载"]
         P4["一致性难题\n分布式 ckpt 部分失败"]
     end
 
-    CkptSize --> "大模型 Checkpoint 规模"
-    "大模型 Checkpoint 规模" --> "保存开销"
-    "保存开销" --> "痛点"
+    CkptSize --> CkptModels
+    CkptModels --> CkptTime
+    CkptTime --> CkptPain
 ```
 
 **关键难点：**
