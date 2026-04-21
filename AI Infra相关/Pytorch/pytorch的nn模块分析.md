@@ -857,7 +857,7 @@ sequenceDiagram
             DL-->>User: batch data
 
             User->>Optimizer: optimizer.zero_grad
-            Note over Opt: set_to_none=True
+            Note over Optimizer: set_to_none=True
 
             User->>Model: outputs = model - inputs
             Note over Model: forward 构建计算图
@@ -872,7 +872,7 @@ sequenceDiagram
             Note over Clip: 按范数裁剪梯度
 
             User->>Optimizer: optimizer.step
-            Note over Opt: 用裁剪后的梯度更新参数
+            Note over Optimizer: 用裁剪后的梯度更新参数
         end
     end
 
