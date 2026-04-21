@@ -848,7 +848,7 @@ sequenceDiagram
     participant Model as nn.Module
     participant LossFn as CrossEntropyLoss
     participant AG as Autograd
-    participant Opt as Optimizer
+    participant Optimizer as Optimizer
     participant Clip as clip_grad_norm_
 
     loop 每个 epoch
@@ -856,7 +856,7 @@ sequenceDiagram
             User->>DL: for inputs, targets in dataloader
             DL-->>User: batch data
 
-            User->>Opt: optimizer.zero_grad
+            User->>Optimizer: optimizer.zero_grad
             Note over Opt: set_to_none=True
 
             User->>Model: outputs = model - inputs
@@ -871,7 +871,7 @@ sequenceDiagram
             User->>Clip: clip_grad_norm_ - model.parameters, max_norm=1.0
             Note over Clip: 按范数裁剪梯度
 
-            User->>Opt: optimizer.step
+            User->>Optimizer: optimizer.step
             Note over Opt: 用裁剪后的梯度更新参数
         end
     end
