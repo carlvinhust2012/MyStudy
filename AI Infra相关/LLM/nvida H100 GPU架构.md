@@ -1,4 +1,4 @@
-# NVIDIA H100 (Hopper) GPU 硬件架构深度分析
+# NVIDIA H100 (Hopper) GPU 硬件架构分析
 
 ## 目录
 
@@ -12,6 +12,9 @@
 8. [计算流水线时序分析](#8-计算流水线时序分析)
 9. [典型计算场景数据流](#9-典型计算场景数据流)
 10. [关键规格速查表](#10-关键规格速查表)
+11. [功耗与能耗分析](#附录-a功耗与能耗分析)
+12. [单卡日处理 Token 量分析](#附录-b单卡日处理-token-量分析)
+13. [性能优化要点](#附录-c性能优化要点)
 
 ---
 
@@ -333,34 +336,44 @@ stateDiagram-v2
 
 ### 4.1 完整 Cache 层次结构图
 
-```mermaid
-graph TB
-    subgraph SM_Level["SM 级存储"]
-        RF["Register File 256 KB / SM 65,536 x 32-bit 延迟: ~1 cycle"]
-        SMem["Shared Memory 92~256 KB / SM 可配置分配 延迟: ~20-30 cycles"]
-        L1["L1 Cache 0~164 KB / SM 可配置分配 延迟: ~20-30 cycles"]
-    end
-
-    subgraph Chip_Level["芯片级存储"]
-        L2["L2 Cache 50 MB (全局共享) 128 B Cache Line 延迟: ~200+ cycles"]
-    end
-
-    subgraph OffChip["片外存储"]
-        HBM["HBM3 80 GB 3.35 TB/s 带宽 延迟: ~300-500 cycles"]
-    end
-
-    RF <-->|"1 cycle"| SMem
-    RF <-->|"1 cycle"| L1
-    SMem <-->|"20-30 cycles"| L2
-    L1 <-->|"20-30 cycles"| L2
-    L2 <-->|"128 B line 6144-bit bus"| HBM
-
-    SMem -.->|"Thread Block Cluster 跨 SM 直接访问"| SMem2["其他 SM 的 Shared Memory Hopper 新特性"]
-    L2 -.->|"NVLink / PCIe 跨 GPU 访问"| Remote["远程 GPU 显存"]
-
-    style SM_Level fill:#16213e,stroke:#e94560,color:#fff
-    style Chip_Level fill:#0f3460,stroke:#e94560,color:#fff
-    style OffChip fill:#1a1a2e,stroke:#e94560,color:#fff
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          SM 级存储 (per SM, 最快, 最近)                          │
+│                                                                                 │
+│  ┌───────────────────────┐                                                     │
+│  │  Register File        │  256 KB (65,536 × 32-bit)                           │
+│  │  延迟: ~1 cycle       │  线程私有, 每 Warp 独立寄存器窗口                    │
+│  └──────┬────────┬───────┘                                                     │
+│         │ ~1c    │ ~1c                                                          │
+│         ▼        ▼                                                              │
+│  ┌──────────────┐  ┌──────────────┐                                            │
+│  │ Shared Memory│  │ L1 Cache     │  共 256 KB, 可配置分配:                     │
+│  │ 92~256 KB    │  │ 0~164 KB     │  ┌──────────────────────────────────────┐   │
+│  │ 延迟: ~20-30c│  │ 延迟: ~20-30c│  │ 0 SMem + 256 L1 │ 128+128 (默认) │   │
+│  │ 32 banks     │  │ 128B line    │  │ 64+192  │ 256 SMem + 0 L1  │   │
+│  │ 软件管理     │  │ 硬件管理     │  └──────────────────────────────────────┘   │
+│  └──────┬───────┘  └──────┬───────┘                                            │
+│         │ 20-30c          │ 20-30c                                              │
+├─────────┼─────────────────┼────────────────────────────────────────────────────┤
+│         ▼                 ▼         芯片级存储 (全 SM 共享)                      │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │                      L2 Cache — 50 MB                                   │   │
+│  │              延迟: ~200+ cycles  │  Cache Line: 128 B                   │   │
+│  │              支持 L2 原子操作、Cache Persistence Mode                  │   │
+│  └──────────────────────────┬──────────────────────────────────────────────┘   │
+│                             │ 300-500c  (128 B line, 6144-bit bus)              │
+├─────────────────────────────┼──────────────────────────────────────────────────┤
+│                             ▼         片外存储                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │                      HBM3 — 80 GB                                       │   │
+│  │              带宽: 3.35 TB/s  │  延迟: ~300-500 cycles                  │   │
+│  │              6 Stacks × 16 GB  │  6144-bit 总线                        │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                 │
+│  跨域访问 (虚线):                                                               │
+│  Shared Memory ◄═╡ Thread Block Cluster ══► 其他 SM 的 Shared Memory (Hopper)  │
+│  L2 Cache      ◄═╡ NVLink 900GB/s / PCIe 64GB/s ══► 远程 GPU 显存              │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 4.2 Cache Line 详细参数
@@ -572,8 +585,17 @@ graph TB
 
     TC --> Precisions
 
-    style TC fill:#533483,stroke:#e94560,color:#fff
-    style Precisions fill:#0f3460,stroke:#e94560,color:#fff
+    style TC fill:#ecfdf5,stroke:#059669,color:#1a202c
+    style Input fill:#dbeafe,stroke:#2563eb,color:#1a202c
+    style Compute fill:#fef3c7,stroke:#d97706,color:#1a202c
+    style Accum fill:#fce7f3,stroke:#db2777,color:#1a202c
+    style Precisions fill:#f5f3ff,stroke:#7c3aed,color:#1a202c
+    style P1 fill:#fef9c3,stroke:#a16207,color:#1a202c
+    style P2 fill:#fef9c3,stroke:#a16207,color:#1a202c
+    style P3 fill:#e0e7ff,stroke:#4338ca,color:#1a202c
+    style P4 fill:#fce7f3,stroke:#be185d,color:#1a202c
+    style P5 fill:#fef9c3,stroke:#a16207,color:#1a202c
+    style P6 fill:#fef9c3,stroke:#a16207,color:#1a202c
 ```
 
 ### 6.2 Tensor Core 峰值算力
@@ -666,9 +688,23 @@ graph TB
     NVSwitch_Layer <--> IB
     NVSwitch_Layer <--> NET
 
-    style Node fill:#1a1a2e,stroke:#e94560,color:#fff,stroke-width:2px
-    style NVSwitch_Layer fill:#533483,color:#fff
-    style External fill:#0f3460,color:#fff
+    style Node fill:#e8f4f8,stroke:#2c7a7b,color:#1a202c,stroke-width:2px
+    style NVSwitch_Layer fill:#fef3c7,stroke:#d97706,color:#1a202c
+    style External fill:#dbeafe,stroke:#2563eb,color:#1a202c
+    style GPU0 fill:#c6f6d5,stroke:#276749,color:#1a202c
+    style GPU1 fill:#c6f6d5,stroke:#276749,color:#1a202c
+    style GPU2 fill:#c6f6d5,stroke:#276749,color:#1a202c
+    style GPU3 fill:#c6f6d5,stroke:#276749,color:#1a202c
+    style GPU4 fill:#c6f6d5,stroke:#276749,color:#1a202c
+    style GPU5 fill:#c6f6d5,stroke:#276749,color:#1a202c
+    style GPU6 fill:#c6f6d5,stroke:#276749,color:#1a202c
+    style GPU7 fill:#c6f6d5,stroke:#276749,color:#1a202c
+    style NVS1 fill:#fef9c3,stroke:#a16207,color:#1a202c
+    style NVS2 fill:#fef9c3,stroke:#a16207,color:#1a202c
+    style NVS3 fill:#fef9c3,stroke:#a16207,color:#1a202c
+    style NVS4 fill:#fef9c3,stroke:#a16207,color:#1a202c
+    style IB fill:#ddd6fe,stroke:#7c3aed,color:#1a202c
+    style NET fill:#ddd6fe,stroke:#7c3aed,color:#1a202c
 ```
 
 ### 7.2 互联带宽对比
@@ -834,9 +870,9 @@ graph TB
     Phase2 --> Phase3
     Phase3 --> OUT
 
-    style Phase1 fill:#16213e,stroke:#e94560,color:#fff
-    style Phase2 fill:#0f3460,stroke:#e94560,color:#fff
-    style Phase3 fill:#533483,color:#fff
+    style Phase1 fill:#1b7a3d,stroke:#145c2e,color:#fff
+    style Phase2 fill:#b8860b,stroke:#8b6508,color:#fff
+    style Phase3 fill:#3a6ea5,stroke:#2c5282,color:#fff
 ```
 
 ### 9.2 大模型训练 (Backward Pass) 数据流
@@ -949,7 +985,131 @@ graph TB
 
 ---
 
-## 附录：性能优化要点
+## 附录 A：功耗与能耗分析
+
+### A.1 TDP 与实际功耗
+
+| 型号 | TDP | 散热方式 | 说明 |
+|------|-----|---------|------|
+| H100 SXM5 | 700 W | 液冷 | 满载可持续运行在 TDP |
+| H100 PCIe | 350 W | 风冷 | 功耗受限，性能低于 SXM5 |
+
+### A.2 不同工作负载下的实际功耗
+
+| 工作负载 | 功耗 (SXM5) | FP8 算力利用率 | 效能 (TFLOPS/W) |
+|----------|------------|---------------|----------------|
+| FP8 矩阵乘法 (稀疏) | ~720 W | ~100% | ~11.0 |
+| FP16 矩阵乘法 | ~680 W | ~100% | ~2.9 |
+| TF32 训练 | ~650 W | 80~90% | ~1.2 |
+| FP64 HPC | ~700 W | ~100% | ~0.05 |
+| 推理 (取决于 batch) | 400~650 W | - | - |
+| 空闲 | ~60 W | 0% | - |
+
+### A.3 系统级功耗 (单节点 8× H100 SXM5)
+
+```
+组件                      典型功耗
+──────────────────────────────────────
+8× H100 SXM5 GPU         5,600 W  (8 × 700W)
+CPU (双路 EPYC 9654)       ~800 W
+内存 (1~2 TB DDR5)         ~300 W
+NVSwitch + 主板            ~500 W
+风扇/泵 (液冷)             ~400 W
+存储 + 网卡 (IB)           ~300 W
+电源转换损耗 (~5%)         ~400 W
+──────────────────────────────────────
+合计                     ~8,300 W
+```
+
+### A.4 日耗电量与电费
+
+以工业电价 ~0.6 元/度计算：
+
+| 规模 | 功率 | 日耗电量 | 日电费 | 年电费 |
+|------|------|---------|--------|--------|
+| 单卡 (SXM5) | 0.7 kW | **16.8 度** | ~10 元 | ~3,650 元 |
+| 单节点 (8卡+服务器) | 8.3 kW | **199.2 度** | ~120 元 | ~4.4 万元 |
+| **万卡集群 (~1250 节点)** | **10.4 MW** | **~24.9 万度** | **~15 万元** | **~5,475 万元** |
+
+> 以上为 GPU 服务器本身的耗电。加上液冷/风冷制冷系统 (COP 通常 2~4)，数据中心总耗电还要 **×1.5~2**，万卡集群年电费轻松破亿。
+
+### A.5 功耗直观对比
+
+```
+家用空调约 1.5 kW
+
+单卡 H100    ≈  0.7 台空调  24h 运行
+单节点 8 卡  ≈  5.5 台空调  24h 运行
+万卡集群      ≈  6,900 台空调  24h 运行
+```
+
+---
+
+## 附录 B：单卡日处理 Token 量分析
+
+### B.1 计算公式
+
+```
+可用算力 = 峰值 TFLOPS × MFU (实际利用率) × 86400 秒
+每日 token = 可用算力 / 每 token 所需 FLOPs
+
+每 token FLOPs:
+  - 训练 (前向 + 反向): ~6 × 参数量
+  - 推理 (仅前向):     ~2 × 参数量
+```
+
+### B.2 训练场景 (单卡, MFU ~45%)
+
+| 模型 | 精度 | 有效算力 | FLOPs/token | 每日 token | 每小时 token |
+|------|------|---------|-------------|-----------|-------------|
+| 7B | FP16 | ~890 TFLOPS | 42 GFLOPs | **~18 亿** | ~760 万 |
+| 70B | FP16 | ~890 TFLOPS | 420 GFLOPs | **~1.8 亿** | ~76 万 |
+| 7B | FP8 | ~1,780 TFLOPS | 42 GFLOPs | **~37 亿** | ~1,525 万 |
+| 70B | FP8 | ~1,780 TFLOPS | 420 GFLOPs | **~3.7 亿** | ~1,525 万 |
+
+### B.3 推理场景 (单卡)
+
+推理分两个阶段，性能特征完全不同：
+
+| 阶段 | 瓶颈 | 模型 7B (FP16) | 模型 70B (FP16) |
+|------|------|---------------|----------------|
+| **Prefill** (处理 prompt) | 计算密集 | ~2000 万 token/s | ~200 万 token/s |
+| **Decode** (逐 token 生成) | 内存带宽受限 | ~240 token/s | ~28 token/s |
+
+以 Decode 为主的长文本生成 (batch=1)：
+
+| 模型 | 每日 token | 约合中文 | 直观对比 |
+|------|-----------|---------|---------|
+| 7B | **~2,000 万** | ~4,000 万字 | 一天生成 ~50 本 300 页书 |
+| 70B | **~240 万** | ~480 万字 | 一天生成 ~6 本 300 页书 |
+| 175B | **~100 万** | ~200 万字 | 一天生成 ~2.5 本 300 页书 |
+
+> 推理 batch 越大吞吐越高，但延迟也越大。
+
+### B.4 电费折算
+
+| 场景 | 日耗电 | 每 token 电费 |
+|------|--------|-------------|
+| 训练 7B (FP8) | 16.8 度 | ~0.00000045 元/token |
+| 训练 70B (FP8) | 16.8 度 | ~0.0000045 元/token |
+| 推理 70B (decode) | ~12 度 | ~0.0005 元/token |
+| 推理 7B (decode) | ~12 度 | ~0.00006 元/token |
+
+### B.5 直观感受
+
+```
+单卡 H100 训练 7B 模型 (FP8):
+  1 天 ≈ 37 亿 token ≈ 7400 万字 (中文)
+  ≈ 读完了维基百科全部中文条目 (~5 亿字) 的 15 遍
+
+单卡 H100 推理 70B 模型 (batch=1):
+  1 天 ≈ 240 万 token ≈ 480 万字 (中文)
+  ≈ 一位打字员 (60字/分) 连续打字 55 年的量
+```
+
+---
+
+## 附录 C：性能优化要点
 
 1. **Occupancy 最大化**: 确保 active Warps 足够多以隐藏内存延迟（推荐每个 SM 至少 6-8 个 active Thread Block）
 2. **L1/Shared Memory 调优**: 根据访问模式选择合理分配比例；矩阵运算推荐最大化 Shared Memory
