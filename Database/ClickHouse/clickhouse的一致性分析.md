@@ -585,7 +585,7 @@ sequenceDiagram
 mindmap
     root((ClickHouse 一致性保证))
         数据一致性
-            INSERT - multi() 原子提交
+            INSERT - multi 原子提交
             Quorum INSERT - 多副本确认
             select_sequential_consistency - 读取仲裁确认数据
             去重 - block_numbers 防重复
@@ -596,8 +596,8 @@ mindmap
             ALTER_METADATA log 条目
             .sql 文件 - 启动时加载 + crash 恢复
         副本一致性
-            /log - 全局复制日志 (共享状态机)
-            /queue - 本地检查点 (每副本独立)
+            log - 全局复制日志 共享状态机
+            queue - 本地检查点 每副本独立
             cloneReplica - 完整重建
             fetchPart - 增量同步 + 校验
             AttachThread - 后台持续追赶
