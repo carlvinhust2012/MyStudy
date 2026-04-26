@@ -1,6 +1,6 @@
 # ClickHouse 分布式部署核心问题解析
 
-> 总结 5 个关键问题: 分布式模块、分片机制、副本配置、ZK/Keeper 一致性协议、Part 命名与数据关系
+> 总结 6 个关键问题: 分布式模块、分片机制、副本配置、ZK/Keeper 一致性协议、Part 命名与数据关系、副本与 Part 的关系
 
 ## 一、ClickHouse 分布式部署模块总览
 
@@ -554,3 +554,125 @@ INSERT 重试场景:
   第 2 次 (重试): block_number = 5 → ZK 检测到冲突 → 拒绝
   第 3 次: block_number = 6 → 成功写入 Part 202504_6_6_0 (新数据)
 ```
+
+## 六、副本与 Part 的关系
+
+### 核心结论
+
+**副本就是 Part 文件的完整拷贝。同一 Shard 内不同 Replica 的每个 Part 目录下的所有文件, 字节级一致。**
+
+### 副本不是按列分割
+
+| 概念 | 说明 |
+|------|------|
+| Replica (副本) | 整张表的完整拷贝, 所有列、所有行、所有文件都一样 |
+| 列裁剪 (Column Pruning) | 查询时只读需要的列, 是读取优化, 不改变存储 |
+
+列裁剪发生在 SELECT 读取阶段, 跟 Replica 无关:
+
+```
+表有 20 列: a, b, c, d, e, f, ... , t
+
+查询: SELECT a, b, c FROM table_A WHERE event_date = '2025-04-15'
+
+磁盘读取:
+  读: a.bin, b.bin, c.bin, event_date.bin  (SELECT + WHERE 需要的列)
+  不读: d.bin, e.bin, f.bin, ... t.bin     (不需要的列完全不读)
+```
+
+### Part 文件级拷贝
+
+```mermaid
+flowchart LR
+    subgraph R1["Replica 1 (Server 1)"]
+        direction TB
+        P1_1["202504_1_1_0/"]
+        F1_1["a.bin, a.mrk2"]
+        F1_2["b.bin, b.mrk2"]
+        F1_3["c.bin, c.mrk2"]
+        F1_4["primary.idx"]
+        F1_5["columns.txt, count.txt"]
+        F1_6["checksums.txt"]
+        F1_7["partition.dat, minmax_*.idx"]
+        P1_1 --> F1_1 --> F1_2 --> F1_3 --> F1_4 --> F1_5 --> F1_6 --> F1_7
+    end
+
+    subgraph R2["Replica 2 (Server 2)"]
+        direction TB
+        P2_1["202504_1_1_0/"]
+        F2_1["a.bin, a.mrk2"]
+        F2_2["b.bin, b.mrk2"]
+        F2_3["c.bin, c.mrk2"]
+        F2_4["primary.idx"]
+        F2_5["columns.txt, count.txt"]
+        F2_6["checksums.txt"]
+        F2_7["partition.dat, minmax_*.idx"]
+        P2_1 --> F2_1 --> F2_2 --> F2_3 --> F2_4 --> F2_5 --> F2_6 --> F2_7
+    end
+
+    R1 -->|"HTTP fetch + checksums 校验"| R2
+
+    style R2 fill:#E8F5E9
+```
+
+### 副本拷贝流程
+
+```mermaid
+sequenceDiagram
+    participant R1 as Replica 1
+    participant ZK as ZooKeeper/Keeper
+    participant R2 as Replica 2
+
+    rect rgb(255, 245, 230)
+        Note right of R1: Step 1: INSERT 写入本地 Part
+        R1->>R1: 排序 + 压缩, 生成 202504_1_1_0/
+        Note over R1: 目录下: a.bin, a.mrk2, b.bin, b.mrk2,<br/>c.bin, c.mrk2, primary.idx, checksums.txt 等
+        R1->>ZK: multi() 提交 (block_number + /log + /parts)
+    end
+
+    rect rgb(240, 255, 230)
+        Note right of ZK: Step 2: 通知其他副本
+        ZK-->>R2: watch 通知 /log 有新条目 GET_PART
+    end
+
+    rect rgb(245, 240, 255)
+        Note right of R2: Step 3: 拉取 Part 文件
+        R2->>R1: HTTP GET /replicas/fetch (interserver 协议)
+        R1-->>R2: 所有文件 (a.bin, b.bin, c.bin, .mrk2, primary.idx, checksums.txt 等)
+        R2->>R2: 校验 checksums.txt 中的 CityHash128
+        Note over R2: 逐文件对比校验和, 确保字节级一致
+    end
+
+    rect rgb(255, 230, 245)
+        Note right of R2: Step 4: 注册到 ZK
+        R2->>ZK: /replicas/R2/parts 新增 202504_1_1_0
+        Note over R2: 副本同步完成, 可查询
+    end
+```
+
+### 完整存储拓扑示例
+
+```
+2 分片 x 2 副本, 每个 Shard 有 3 个 Part, 每个 Part 有 4 列:
+
+Shard 1:
+  Replica 1 (Server 1):  202504_1_1_0/{a.bin,a.mrk2,...}  202504_2_2_0/{...}  202504_3_3_0/{...}
+  Replica 2 (Server 2):  202504_1_1_0/{a.bin,a.mrk2,...}  202504_2_2_0/{...}  202504_3_3_0/{...}
+                         └── 完全一样 ──┘                       └── 完全一样 ──┘
+
+Shard 2:
+  Replica 3 (Server 3):  202504_4_4_0/{a.bin,a.mrk2,...}  202504_5_5_0/{...}  202504_6_6_0/{...}
+  Replica 4 (Server 4):  202504_4_4_0/{a.bin,a.mrk2,...}  202504_5_5_0/{...}  202504_6_6_0/{...}
+                         └── 完全一样 ──┘                       └── 完全一样 ──┘
+                         └── 和 Shard 1 数据不同 ──┘
+```
+
+### 副本相关常见问题
+
+| 问题 | 答案 |
+|------|------|
+| 副本存的是部分列吗? | 不是, 是完整表的所有列的所有 Part 文件 |
+| 不同 Replica 的同名 Part 有区别吗? | 没有区别, 字节级一致, 通过 checksums.txt 校验 |
+| 合并会在所有副本上执行吗? | 会, 每个 Replica 独立触发后台合并, 合并后各自生成同名的新 Part |
+| 副本间传输的是文件还是 SQL? | 是文件, 通过 HTTP interserver 协议传输整个 Part 目录 |
+| 磁盘 I/O: 副本拷贝会读源 Replica 的磁盘吗? | 会, HTTP fetch 从源 Replica 读取 .bin 等文件并传输 |
