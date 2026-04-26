@@ -1,6 +1,6 @@
-# ClickHouse 分布式部署分析
+# ClickHouse 分布式部署核心问题解析
 
-> 总结 4 个关键问题: 分布式模块、分片机制、副本配置、ZK/Keeper 一致性协议
+> 总结 5 个关键问题: 分布式模块、分片机制、副本配置、ZK/Keeper 一致性协议、Part 命名与数据关系
 
 ## 一、ClickHouse 分布式部署模块总览
 
@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    Client["客户端<br/>clickhouse-client / JDBC / HTTP"]
+    Client["客户端clickhouse-client / JDBC / HTTP"]
 
     subgraph LB["负载均衡层 (可选)"]
         Proxy["CHProxy / Nginx / HAProxy"]
@@ -106,12 +106,12 @@ Server 1
 
 ```mermaid
 flowchart TB
-    Client["客户端 INSERT"] --> Dist["Distributed 表<br/>(路由代理, 不存数据)"]
+    Client["客户端 INSERT"] --> Dist["Distributed 表(路由代理, 不存数据)"]
     Dist -->|"intHash32(user_id) % 2 = 0"| S1["Shard 1 (Server 1, Server 2)"]
     Dist -->|"intHash32(user_id) % 2 = 1"| S2["Shard 2 (Server 3, Server 4)"]
 
-    S1 --> P1["local_table_A<br/>202504_1_1_0 (5MB)<br/>202504_3_3_0 (5MB)"]
-    S2 --> P2["local_table_A<br/>202504_2_2_0 (5MB)<br/>202504_4_4_0 (5MB)"]
+    S1 --> P1["local_table_A202504_1_1_0 (5MB)202504_3_3_0 (5MB)"]
+    S2 --> P2["local_table_A202504_2_2_0 (5MB)202504_4_4_0 (5MB)"]
 ```
 
 ### 分片写入流程
@@ -232,10 +232,10 @@ flowchart TB
     Shard --> R1["Replica 1 (Server 1)"]
     Shard --> R2["Replica 2 (Server 2)"]
 
-    R1 --> P1["local_table<br/>202504_1_1_0 (10MB)<br/>202504_2_2_0 (10MB)"]
-    R2 --> P2["local_table<br/>202504_1_1_0 (10MB) 完整拷贝<br/>202504_2_2_0 (10MB) 完整拷贝"]
+    R1 --> P1["local_table202504_1_1_0 (10MB)202504_2_2_0 (10MB)"]
+    R2 --> P2["local_table202504_1_1_0 (10MB) 完整拷贝202504_2_2_0 (10MB) 完整拷贝"]
 
-    ZK["ZooKeeper/Keeper<br/>/log 复制日志<br/>/replicas/*/parts 注册"]
+    ZK["ZooKeeper/Keeper/log 复制日志/replicas/*/parts 注册"]
 
     R1 -.->|"写入 + 拉取"| ZK
     R2 -.->|"拉取 + 注册"| ZK
@@ -432,7 +432,7 @@ sequenceDiagram
     participant F2 as ZK Follower 2
 
     CH1->>Leader: multi() 原子操作
-    Note over Leader: 操作内容:<br/>1. check block_numbers/{partition} 无冲突<br/>2. block_numbers/{partition} + 1<br/>3. /log 新增 GET_PART 条目<br/>4. /replicas/R1/parts 新增 Part<br/>5. /replicas/R1/log_pointer 更新
+    Note over Leader: 操作内容:1. check block_numbers/{partition} 无冲突2. block_numbers/{partition} + 13. /log 新增 GET_PART 条目4. /replicas/R1/parts 新增 Part5. /replicas/R1/log_pointer 更新
 
     Leader->>Leader: 写事务日志 (ZXID=100)
     Leader->>F1: PROPOSAL(ZXID=100)
@@ -446,7 +446,7 @@ sequenceDiagram
 
     Leader-->>CH1: multi() 成功
 
-    Note over Leader: 保证:<br/>全部成功 或 全部失败<br/>不会出现分配了 block_number<br/>但 /log 未写入的不一致状态
+    Note over Leader: 保证:全部成功 或 全部失败不会出现分配了 block_number但 /log 未写入的不一致状态
 ```
 
 ### ZooKeeper vs ClickHouse Keeper 对比
@@ -475,3 +475,82 @@ sequenceDiagram
 | Leader 选举 | /leader_election/leader 临时节点 |
 | Quorum INSERT | /quorum/parallel 跟踪多副本确认 |
 | 副本恢复 | cloneReplica, is_lost 标记 |
+
+## 五、Part 命名规则与数据关系
+
+### Part 命名格式
+
+```
+202504_1_1_0
+  │    │ │ │
+  │    │ │ └── level: 合并层级 (0=新插入, 1=一次合并, 2=两次合并...)
+  │    │ └──── max_block_number: 这个 Part 包含的最大 block 编号
+  │    └────── min_block_number: 这个 Part 包含的最小 block 编号
+  └─────────── partition_id: 分区值 (202504 = toYYYYMM(event_date))
+```
+
+- `partition_id`: 分区表达式求值结果
+- `min_block_number` / `max_block_number`: 每次 INSERT 从 ZK 分配递增的 block number, 合并时取参与合并 Part 的最小和最大值
+- `level`: 每次合并 +1, 表示这个 Part 经历了几轮合并
+
+### Part 生命周期与合并
+
+```mermaid
+timeline
+    title Part 演化示例
+    t0 : INSERT 第 1 批 (1000 行) → Part 202504_1_1_0 (10MB, level=0)
+    t1 : INSERT 第 2 批 (1000 行) → Part 202504_2_2_0 (10MB, level=0)
+    t2 : INSERT 第 3 批 (1000 行) → Part 202504_3_3_0 (10MB, level=0)
+    t3 : 后台合并 1+2+3 → Part 202504_1_3_1 (30MB, level=1, 旧的 3 个 Part 被删除)
+    t4 : INSERT 第 4 批 → Part 202504_4_4_0 (10MB, level=0)
+    t5 : 再次合并 → Part 202504_1_4_2 (40MB, level=2)
+```
+
+### 不同场景下 Part 数据是否相同
+
+| 场景 | Part 名 | 数据内容 |
+|------|---------|---------|
+| 同一个 Shard, 不同 INSERT | `202504_1_1_0` vs `202504_2_2_0` | 不同数据, 不同批次插入的行 |
+| 同一个 Shard, 合并前后 | `202504_1_1_0` + `202504_2_2_0` → `202504_1_2_1` | 相同数据, 合并后内容不变, 但合成一个大 Part |
+| 不同副本 (同一个 Shard) | Replica 1 的 `202504_1_1_0` vs Replica 2 的 `202504_1_1_0` | 完全一样, 完整拷贝 |
+| 不同 Shard (分片) | Shard 1 的 `202504_1_1_0` vs Shard 2 的 `202504_1_1_0` | 不同数据, 各 Shard 独立分配 block_number, 恰好同名但数据完全不同 |
+
+### 关键结论
+
+**只有副本之间的同名 Part 数据才一样, 其他所有情况都不一样:**
+
+```mermaid
+flowchart TB
+    Question["202504_1_1_0 和 202504_2_2_0 数据一样吗?"]
+    Q1{"同一个 Shard 内?"}
+    Q2{"同名 Part?"}
+    Q3{"合并后的 Part?"}
+
+    Question --> Q1
+    Q1 -->|"否 (不同 Shard)"| Diff1["不一样<br/>各 Shard 数据子集不同"]
+    Q1 -->|"是"| Q2
+    Q2 -->|"否 (不同 Part 名)"| Diff2["不一样<br/>不同 INSERT 批次的数据"]
+    Q2 -->|"是"| Q3
+    Q3 -->|"是 (合并产生)"| Same["一样<br/>合并不改变数据内容"]
+    Q3 -->|"否 (副本间拷贝)"| Same2["一样<br/>副本是完整拷贝"]
+
+    style Diff1 fill:#FFCDD2
+    style Diff2 fill:#FFCDD2
+    style Same fill:#C8E6C9
+    style Same2 fill:#C8E6C9
+```
+
+### block_number 的作用
+
+block_number 是 ZK 中 `/block_numbers/{partition}` 的递增计数器, 核心作用是 **去重**:
+
+- 每次 INSERT 时, ZK 原子分配 block_number + 1
+- 如果同一个 INSERT 因为网络原因重试, block_number 已被分配, ZK 会拒绝重复
+- 保证同一批数据不会被写入两次 (Exactly-Once 语义)
+
+```
+INSERT 重试场景:
+  第 1 次: block_number = 5 → 成功写入 Part 202504_5_5_0
+  第 2 次 (重试): block_number = 5 → ZK 检测到冲突 → 拒绝
+  第 3 次: block_number = 6 → 成功写入 Part 202504_6_6_0 (新数据)
+```
