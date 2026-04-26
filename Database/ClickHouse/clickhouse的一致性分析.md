@@ -1,4 +1,4 @@
-# ClickHouse 元数据与副本一致性分析
+# ClickHouse 元数据与副本一致性深度解析
 
 > 基于 ClickHouse 源码 (ClickHouse-master) 分析，聚焦 ReplicatedMergeTree + ZooKeeper 的一致性机制
 
@@ -205,7 +205,7 @@ sequenceDiagram
         R1->>R1: 写入本地 Part
         R1->>ZK: multi() 写入 /log + /parts
         R1->>ZK: 创建 /quorum/parallel/{part_name}
-        Note over ZK: ReplicatedMergeTreeQuorumEntry:<br/>part_name, required_replicas=2,<br/>actual_replicas=0, replicas=[]
+        Note over ZK: ReplicatedMergeTreeQuorumEntry:part_name, required_replicas=2,actual_replicas=0, replicas=[]
     end
 
     rect rgb(240, 240, 255)
@@ -213,11 +213,11 @@ sequenceDiagram
         R2->>ZK: 读取 /log, 拉取 Part
         R2->>R1: fetch Part 数据
         R2->>ZK: 注册 /replicas/R2/parts
-        R2->>ZK: 更新 /quorum/parallel/{part_name}<br/>actual_replicas=2
+        R2->>ZK: 更新 /quorum/parallel/{part_name}actual_replicas=2
 
         R3->>ZK: 读取 /log, 拉取 Part
         R3->>ZK: 注册 /replicas/R3/parts
-        R3->>ZK: 更新 /quorum/parallel/{part_name}<br/>actual_replicas=3
+        R3->>ZK: 更新 /quorum/parallel/{part_name}actual_replicas=3
     end
 
     rect rgb(255, 255, 230)
@@ -242,7 +242,7 @@ flowchart TD
     CheckQuorum -->|"是"| Success["INSERT 成功"]
     CheckQuorum -->|"否"| Wait
     Timeout -->|"超时"| Fail["UNKNOWN_STATUS_OF_INSERT"]
-    Fail --> Note["数据已写入本地副本<br/>但 quorum 状态未知<br/>/quorum/status 节点残留<br/>阻塞后续非并行 quorum 写入"]
+    Fail --> Note["数据已写入本地副本但 quorum 状态未知/quorum/status 节点残留阻塞后续非并行 quorum 写入"]
 ```
 
 ## 五、select_sequential_consistency 流程
@@ -268,7 +268,7 @@ sequenceDiagram
         R->>ZK: 读取 /quorum/parallel/{part_name}
         R->>ZK: 读取 /replicas/self/quorum/parallel/
         ZK-->>R: QuorumEntry 数据
-        Note over R: 对比: quorum 确认的 block number<br/>vs 本地拥有的 block number
+        Note over R: 对比: quorum 确认的 block numbervs 本地拥有的 block number
     end
 
     rect rgb(255, 240, 230)
@@ -276,12 +276,12 @@ sequenceDiagram
         R->>R: foreachActiveParts()
         Note over R: Part A: max_block=42, quorum=42 → 保留
         Note over R: Part B: max_block=44, quorum=42 → 跳过!
-        Note over R: Part B 是非 quorum INSERT 的数据<br/>可能其他副本没有
+        Note over R: Part B 是非 quorum INSERT 的数据可能其他副本没有
     end
 
     R-->>C: 只返回 quorum 确认的数据
 
-    Note over R,C: 注意: insert_quorum_parallel 开启时<br/>sequential_consistency 不生效<br/>因为并行 INSERT 可能写入不同副本子集
+    Note over R,C: 注意: insert_quorum_parallel 开启时sequential_consistency 不生效因为并行 INSERT 可能写入不同副本子集
 ```
 
 ## 六、DDL ON CLUSTER 复制流程
@@ -337,7 +337,7 @@ sequenceDiagram
         DDL-->>C: CREATE TABLE 成功 (所有副本)
     end
 
-    Note over ZK: 任务生命周期: 7 天后自动清理<br/>max_tasks_in_queue = 1000
+    Note over ZK: 任务生命周期: 7 天后自动清理max_tasks_in_queue = 1000
 ```
 
 ## 七、ALTER TABLE Schema 变更复制
@@ -391,8 +391,8 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A1["Replica 1: ALTER ADD col_a"] --> CAS1{"CAS /metadata_version?<br/>期望 N → N+1"}
-    A2["Replica 2: ALTER ADD col_b"] --> CAS2{"CAS /metadata_version?<br/>期望 N → N+1"}
+    A1["Replica 1: ALTER ADD col_a"] --> CAS1{"CAS /metadata_version?期望 N → N+1"}
+    A2["Replica 2: ALTER ADD col_b"] --> CAS2{"CAS /metadata_version?期望 N → N+1"}
 
     CAS1 -->|"ZOK (先到)"| Success1["提交成功, version=N+1"]
     CAS2 -->|"ZBADVERSION"| Retry["重试: 读取 N+1, 提交 N+2"]
@@ -585,32 +585,32 @@ sequenceDiagram
 mindmap
     root((ClickHouse 一致性保证))
         数据一致性
-            INSERT: multi() 原子提交
-            Quorum INSERT: 多副本确认
-            select_sequential_consistency: 读取仲裁确认数据
-            去重: block_numbers 防重复
-            checksums: Part 级数据完整性
+            INSERT - multi() 原子提交
+            Quorum INSERT - 多副本确认
+            select_sequential_consistency - 读取仲裁确认数据
+            去重 - block_numbers 防重复
+            checksums - Part 级数据完整性
         元数据一致性
-            CREATE ON CLUSTER: DDL 队列 + 状态跟踪
-            ALTER: CAS metadata_version
+            CREATE ON CLUSTER - DDL 队列 + 状态跟踪
+            ALTER - CAS metadata_version
             ALTER_METADATA log 条目
-            .sql 文件: 启动时加载 + crash 恢复
+            .sql 文件 - 启动时加载 + crash 恢复
         副本一致性
-            /log: 全局复制日志 (共享状态机)
-            /queue: 本地检查点 (每副本独立)
-            cloneReplica: 完整重建
-            fetchPart: 增量同步 + 校验
-            AttachThread: 后台持续追赶
+            /log - 全局复制日志 (共享状态机)
+            /queue - 本地检查点 (每副本独立)
+            cloneReplica - 完整重建
+            fetchPart - 增量同步 + 校验
+            AttachThread - 后台持续追赶
         故障恢复
-            Session 过期: 自动重连 + 元数据修复
-            副本丢失: is_lost 标记 + clone
-            Part 损坏: 从其他副本重新拉取
-            ZK 短暂不可用: 本地缓冲 + 重试
+            Session 过期 - 自动重连 + 元数据修复
+            副本丢失 - is_lost 标记 + clone
+            Part 损坏 - 从其他副本重新拉取
+            ZK 短暂不可用 - 本地缓冲 + 重试
         设计权衡
-            最终一致: 不是强一致
-            异步复制: 其他副本异步拉取
-            独立合并: 不推送合并数据, 各副本自行计算
-            R=W=All: Quorum INSERT 实现读写都确认
+            最终一致 - 不是强一致
+            异步复制 - 其他副本异步拉取
+            独立合并 - 不推送合并数据各副本自行计算
+            R=W=All - Quorum INSERT 实现读写都确认
 ```
 
 ## 十二、关键源码文件索引
