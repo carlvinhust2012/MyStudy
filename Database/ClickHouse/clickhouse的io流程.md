@@ -1,4 +1,4 @@
-# ClickHouse I/O 流程深度解析 (Mermaid 版)
+# ClickHouse I/O 流程分析
 
 > 基于 ClickHouse 源码 (ClickHouse-master) 分析，聚焦 I/O 层的 Buffer 链、压缩、缓存、异步与预取机制
 

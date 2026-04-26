@@ -1,4 +1,4 @@
-# ClickHouse 存储模型深度解析
+# ClickHouse 存储模型分析_old
 
 > 基于 ClickHouse 源码 (ClickHouse-master) 分析，聚焦 MergeTree 存储引擎家族
 
