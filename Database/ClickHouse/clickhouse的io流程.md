@@ -672,7 +672,89 @@ sequenceDiagram
 | 同查询重跑 | Hit | Hit | 0 | 0 | ~0.5ms |
 | 不同列同 Part | Hit | Miss | ~350KB | 2 | ~4ms |
 
-## 十一、设计精髓总结
+## 十一、为什么 ReadBuffer 有工厂方法而 WriteBuffer 没有？
+
+### 设计对比
+
+| 维度 | ReadBuffer | WriteBuffer |
+|------|-----------|-------------|
+| 工厂方法 | `createReadBufferFromFileBase()` 独立工厂函数 | 无，直接在各 `Disk` 子类中 `make_unique` |
+| 工厂文件 | `src/Disks/IO/createReadBufferFromFileBase.h` | 不存在 |
+| ReadMethod 选择 | 工厂根据 `ReadSettings.read_method` 选择 5 种 Buffer | 无类似机制，只有 `WriteBufferFromFile` 一种 |
+| 创建位置 | 磁盘抽象层 + 工厂解耦 | 各 Disk 子类各自实现 `writeFile()` |
+
+### ReadBuffer 工厂方法流程
+
+```mermaid
+sequenceDiagram
+    participant Caller as 调用方 (MergeTreeReader)
+    participant Disk as DiskLocal / DiskObjectStorage
+    participant Factory as createReadBufferFromFileBase()
+    participant Settings as ReadSettings
+
+    Caller->>Disk: readFile(path, settings)
+    Disk->>Factory: createReadBufferFromFileBase(path, settings)
+    Factory->>Settings: settings.read_method
+
+    alt read
+        Factory-->>Caller: ReadBufferFromFile
+    else pread
+        Factory-->>Caller: PReadWithFDCache
+    else mmap
+        Factory-->>Caller: MMapReadBuffer
+    else io_uring
+        Factory-->>Caller: IOUringReader
+    else pread_threadpool
+        Factory-->>Caller: ThreadPoolReader
+    end
+```
+
+### WriteBuffer 直接创建流程
+
+```mermaid
+sequenceDiagram
+    participant Caller as 调用方 (MergeTreeWriter)
+    participant Disk as DiskLocal
+    participant CWBuf as CompressedWriteBuffer
+    participant WBuf as WriteBufferFromFile
+
+    Caller->>Disk: writeFile(path, buf_size, mode, settings)
+    Note over Disk: 无工厂, 无 ReadMethod 式选择
+    Disk->>Disk: make_unique of WriteBufferFromFile
+    Note over Disk: 固定类型: open() + write() + fsync()
+    Disk-->>Caller: unique_ptr of WriteBufferFromFile
+
+    Caller->>CWBuf: CompressedWriteBuffer(底层 WBuf)
+    Note over CWBuf: 复杂性在上层装饰器链<br/>CompressedWriteBuffer<br/>→ HashingWriteBuffer (可选)<br/>→ WriteBufferFromFile
+```
+
+### 根本原因：读 5 种 vs 写 1 种
+
+```mermaid
+flowchart TB
+    subgraph ReadPath["读路径: 复杂, 需要工厂"]
+        direction TB
+        RS["ReadSettings.read_method"]
+        RS --> R1["read: ReadBufferFromFile"]
+        RS --> R2["pread: PReadWithFDCache"]
+        RS --> R3["mmap: MMapReadBuffer"]
+        RS --> R4["io_uring: IOUringReader"]
+        RS --> R5["pread_threadpool: ThreadPoolReader"]
+        Note1["5 种 I/O 方式需要运行时选择<br/>→ 工厂模式解耦"]
+    end
+
+    subgraph WritePath["写路径: 简单, 无需工厂"]
+        direction TB
+        WS["WriteSettings"]
+        WS --> W1["WriteBufferFromFile (唯一实现)"]
+        Note2["只有 open() + write() + fsync()<br/>→ 直接 make_unique 即可"]
+        Note3["复杂性在上层装饰器链<br/>CompressedWriteBuffer<br/>HashingWriteBuffer 等"]
+    end
+```
+
+读路径需要工厂是因为底层 I/O 方式多样（`read`/`pread`/`mmap`/`io_uring`/`pread_threadpool`），运行时根据 `ReadSettings` 选择。写路径底层只有一种实现，复杂性已被上层 `CompressedWriteBuffer` 等装饰器封装，不需要工厂。
+
+## 十二、设计精髓总结
 
 ```mermaid
 mindmap
