@@ -16,25 +16,25 @@ PCIe 采用分层协议架构，从上到下分为：
 ```mermaid
 sequenceDiagram
     participant RC as Root Complex
-    participant Link as PCIe Link
+    participant PLink as PCIe Link
     participant EP as Endpoint
 
     Note over RC,EP: 阶段1: 系统上电与复位
-    RC->>Link: Power On
-    Link->>EP: PERST# (Fundamental Reset)
+    RC->>PLink: Power On
+    PLink->>EP: PERST# (Fundamental Reset)
     EP->>EP: 内部初始化
 
     Note over RC,EP: 阶段2: 物理层链路训练
-    RC->>Link: Detect.Presence
-    Link->>RC: Presence Detected
-    RC->>Link: Polling.Active (发送TS1有序集)
-    EP->>Link: 响应TS1有序集
-    RC->>Link: Polling.Compliance
-    Link->>RC: Polling.Configuration
-    RC->>Link: Configuration.Lanenum (发送TS2)
-    EP->>Link: 确认链路编号
-    RC->>Link: Configuration.Complete
-    Link->>RC: L0 (链路激活)
+    RC->>PLink: Detect.Presence
+    PLink->>RC: Presence Detected
+    RC->>PLink: Polling.Active (发送TS1有序集)
+    EP->>PLink: 响应TS1有序集
+    RC->>PLink: Polling.Compliance
+    PLink->>RC: Polling.Configuration
+    RC->>PLink: Configuration.Lanenum (发送TS2)
+    EP->>PLink: 确认链路编号
+    RC->>PLink: Configuration.Complete
+    PLink->>RC: L0 (链路激活)
 
     Note over RC,EP: 阶段3: 数据链路层初始化
     RC->>EP: DLLP (数据链路层包)
@@ -176,11 +176,211 @@ sequenceDiagram
     RC->>EP: Ack DLLP
 ```
 
+### 4.3 读写 IO 时序流程总结
+
+#### 4.3.1 读操作简化时序图
+
+```mermaid
+sequenceDiagram
+    participant Host as Host CPU
+    participant RC as Root Complex
+    participant EP as Endpoint
+
+    Host->>RC: CPU Read Request
+    RC->>EP: Memory Read TLP (请求者ID, 地址, 长度)
+
+    Note right of EP: 解析TLP<br/>读取本地存储
+
+    EP->>RC: Completion TLP (数据)
+    RC->>EP: Ack DLLP (确认收到)
+    RC->>Host: 返回数据到CPU
+```
+
+**读操作关键特点：**
+- **Non-Posted 事务**：必须等待 Completion 响应
+- 可能需要多个 Completion 包（数据量大时）
+- 发送方在等待响应期间持有 Tag（用于匹配请求和响应）
+
+#### 4.3.2 Posted Write 简化时序图
+
+```mermaid
+sequenceDiagram
+    participant Host as Host CPU
+    participant RC as Root Complex
+    participant EP as Endpoint
+
+    Host->>RC: CPU Write Request
+    RC->>EP: Memory Write TLP (地址, 数据)
+    Host-->>Host: CPU 立即继续执行
+
+    Note right of EP: 校验CRC<br/>写入存储
+
+    EP->>RC: Ack DLLP (确认接收)
+```
+
+**Posted Write 关键特点：**
+- **无需 Completion 响应**，发送后立即返回
+- 性能更高，适合大量数据传输
+- 可靠性由 Ack/Nak 机制保证
+
+#### 4.3.3 Non-Posted Write 简化时序图
+
+```mermaid
+sequenceDiagram
+    participant Host as Host CPU
+    participant RC as Root Complex
+    participant EP as Endpoint
+
+    Host->>RC: CPU Write Request
+    RC->>EP: Memory Write TLP (地址, 数据, Tag)
+
+    Note right of EP: 校验CRC<br/>写入存储
+
+    EP->>RC: Completion TLP (确认写入完成)
+    RC->>Host: 通知CPU写入完成
+```
+
+**Non-Posted Write 关键特点：**
+- 需要等待 Completion 确认写入成功
+- 适用于需要确保数据已写入的场景
+- 使用 Tag 匹配请求和响应
+
+#### 4.3.4 读写操作对比总结
+
+| 特性 | Memory Read | Posted Write | Non-Posted Write |
+|------|-------------|--------------|------------------|
+| **响应方式** | Completion TLP | 无 | Completion TLP |
+| **等待时间** | 必须等待 | 无需等待 | 需要等待 |
+| **性能** | 较低 | 最高 | 中等 |
+| **适用场景** | 读取数据 | 批量写入 | 需要确认的写入 |
+| **Tag 使用** | 是 | 否 | 是 |
+| **可靠性机制** | Ack/Nak + 超时 | Ack/Nak | Ack/Nak + Completion |
+
+#### 4.3.5 核心流程口诀
+
+```
+读操作：      发请求 → 等响应 → 返回数据 → 发Ack
+Posted写：   发数据 → 立即返回 → 对方Ack
+Non-Posted写：发数据 → 等Completion → 通知完成
+```
+
 ---
 
-## 5. PCIe 数据传输流程图
+## 5. PCIe 配置读写时序流程
 
-### 5.1 TLP 包结构与传输
+### 5.1 配置空间概述
+
+PCIe 配置空间用于设备枚举、资源分配和功能配置：
+- **配置空间大小**：每个 Function 4KB（PCIe 扩展）
+- **访问方式**：Config Read / Config Write TLP
+- **事务类型**：始终为 **Non-Posted**（必须等待 Completion）
+- **地址格式**：Bus + Device + Function + Register Offset
+
+### 5.2 配置读操作时序图
+
+```mermaid
+sequenceDiagram
+    participant CPU as CPU (软件层)
+    participant RC as Root Complex
+    participant EP as Target Endpoint
+
+    CPU->>RC: Config Read Request (Bus/Dev/Func/Reg)
+    RC->>EP: Config Read TLP (Type0/Type1)
+
+    Note right of EP: 解析配置请求<br/>读取配置寄存器
+
+    EP->>RC: Completion TLP (配置数据)
+    RC->>EP: Ack DLLP
+    RC->>CPU: 返回配置数据
+```
+
+### 5.3 配置写操作时序图
+
+```mermaid
+sequenceDiagram
+    participant CPU as CPU (软件层)
+    participant RC as Root Complex
+    participant EP as Target Endpoint
+
+    CPU->>RC: Config Write Request (Bus/Dev/Func/Reg, Data)
+    RC->>EP: Config Write TLP (Type0/Type1, Data)
+
+    Note right of EP: 解析配置请求<br/>写入配置寄存器
+
+    EP->>RC: Completion TLP (写入确认)
+    RC->>EP: Ack DLLP
+    RC->>CPU: 配置写入完成
+```
+
+### 5.4 配置 TLP 类型
+
+| TLP 类型 | 适用场景 | 说明 |
+|----------|----------|------|
+| **Type 0** | 本地总线设备 | 直接访问目标设备，不经过 Switch |
+| **Type 1** | 跨总线设备 | 经过 Switch 转发，包含完整路由信息 |
+
+```
+Type 0 配置请求地址格式:
+┌─────────────────────────────────────────────────────────┐
+│ Reserved │  Register Offset  │ Function │ Device │ Bus  │
+│  (4bit)  │     (12bit)       │  (3bit)  │ (5bit) │(8bit)│
+└─────────────────────────────────────────────────────────┘
+
+Type 1 配置请求地址格式 (包含完整路由):
+┌─────────────────────────────────────────────────────────┐
+│ Register │ Function │ Device │ Bus  │   Reserved       │
+│ (12bit)  │  (3bit)  │ (5bit) │(8bit)│    (32bit)       │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 5.5 配置读写与 Memory 读写对比
+
+| 特性 | 配置读写 | Memory 读写 |
+|------|----------|-------------|
+| **TLP 类型** | Config Read/Write | MRd/MWr |
+| **地址空间** | 配置空间 | Memory/IO 空间 |
+| **事务属性** | 始终 Non-Posted | 可 Posted 或 Non-Posted |
+| **数据长度** | 通常 4 字节 | 可达 MaxPayload |
+| **访问时机** | 初始化/枚举阶段 | 正常数据传输阶段 |
+| **路由方式** | Bus/Device/Function | Memory 地址 |
+| **超时处理** | 返回错误值 | 重试机制 |
+
+### 5.6 配置访问典型场景
+
+```mermaid
+sequenceDiagram
+    participant CPU as CPU
+    participant RC as RC
+    participant EP as EP
+
+    Note over CPU,EP: 设备枚举流程
+
+    CPU->>RC: Config Read (VID/DID)
+    RC->>EP: Config Read TLP
+    EP->>RC: 返回 Vendor ID
+    RC->>CPU: 返回 Vendor ID
+
+    CPU->>RC: Config Read (Class)
+    RC->>EP: Config Read TLP
+    EP->>RC: 返回设备类型
+    RC->>CPU: 返回设备类型
+
+    CPU->>RC: Config Write (BAR)
+    RC->>EP: Config Write TLP
+    EP->>RC: 确认 BAR 分配
+    RC->>CPU: 确认 BAR 分配
+
+    CPU->>RC: Config Write (Enable)
+    RC->>EP: Config Write TLP
+    EP->>RC: 设备启用
+    RC->>CPU: 设备启用
+```
+
+---
+
+## 6. PCIe 数据传输流程图
+
+### 6.1 TLP 包结构与传输
 
 ```mermaid
 flowchart TB
@@ -208,7 +408,7 @@ flowchart TB
     end
 ```
 
-### 5.2 数据链路层确认机制
+### 6.2 数据链路层确认机制
 
 ```mermaid
 sequenceDiagram
@@ -233,7 +433,7 @@ sequenceDiagram
 
 ---
 
-## 6. PCIe 流控制时序图
+## 7. PCIe 流控制时序图
 
 ```mermaid
 sequenceDiagram
@@ -266,9 +466,9 @@ sequenceDiagram
 
 ---
 
-## 7. PCIe 电源管理与退出时序图
+## 8. PCIe 电源管理与退出时序图
 
-### 7.1 进入低功耗状态 (ASPM L1)
+### 8.1 进入低功耗状态 (ASPM L1)
 
 ```mermaid
 sequenceDiagram
@@ -291,7 +491,7 @@ sequenceDiagram
     Note over RC,EP: L1 状态 (低功耗)
 ```
 
-### 7.2 从低功耗状态唤醒
+### 8.2 从低功耗状态唤醒
 
 ```mermaid
 sequenceDiagram
@@ -319,7 +519,7 @@ sequenceDiagram
 
 ---
 
-## 8. PCIe 正常退出流程
+## 9. PCIe 正常退出流程
 
 ```mermaid
 sequenceDiagram
@@ -351,27 +551,27 @@ sequenceDiagram
 
 ---
 
-## 9. PCIe 异常处理时序图
+## 10. PCIe 异常处理时序图
 
-### 9.1 错误检测与恢复
+### 10.1 错误检测与恢复
 
 ```mermaid
 sequenceDiagram
     participant EP as Endpoint
-    participant Link as PCIe Link
+    participant PLink as PCIe Link
     participant RC as Root Complex
     participant Driver as 驱动程序
 
     Note over EP,Driver: 错误检测
-    EP->>Link: 发送TLP
-    Link--xRC: 传输错误 (CRC失败)
+    EP->>PLink: 发送TLP
+    PLink--xRC: 传输错误 (CRC失败)
 
     RC->>RC: 检测到错误
     RC->>EP: Nak DLLP (请求重传)
 
     alt 重传成功
-        EP->>Link: 重传TLP
-        Link->>RC: 正确接收
+        EP->>PLink: 重传TLP
+        PLink->>RC: 正确接收
         RC->>EP: Ack DLLP
     else 重传失败超过阈值
         RC->>RC: 触发链路恢复
@@ -382,7 +582,7 @@ sequenceDiagram
     end
 ```
 
-### 9.2 致命错误处理
+### 10.2 致命错误处理
 
 ```mermaid
 flowchart TD
@@ -409,7 +609,7 @@ flowchart TD
 
 ---
 
-## 10. 完整的 PCIe 操作时序总结
+## 11. 完整的 PCIe 操作时序总结
 
 | 操作类型 | Posted | 完成时间 | 可靠性机制 |
 |----------|--------|----------|------------|
@@ -422,9 +622,9 @@ flowchart TD
 
 ---
 
-## 11. 时序参数参考
+## 12. 时序参数参考
 
-### 11.1 链路训练时序
+### 12.1 链路训练时序
 
 | 参数 | PCIe 3.0 | PCIe 4.0 | PCIe 5.0 |
 |------|----------|----------|----------|
@@ -432,7 +632,7 @@ flowchart TD
 | 典型训练时间 | 50-100ms | 50-100ms | 50-100ms |
 | Recovery时间 | 1-10ms | 1-10ms | 1-10ms |
 
-### 11.2 数据传输时序
+### 12.2 数据传输时序
 
 | 参数 | PCIe 3.0 x16 | PCIe 4.0 x16 | PCIe 5.0 x16 |
 |------|--------------|--------------|--------------|
