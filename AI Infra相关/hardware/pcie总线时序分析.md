@@ -9,9 +9,143 @@ PCIe 采用分层协议架构，从上到下分为：
 
 ---
 
-## 2. PCIe 初始化时序图
+## 2. PCIe 拓扑与核心组件
 
-### 2.1 完整初始化流程
+### 2.1 PCIe 拓扑结构
+
+```mermaid
+flowchart TB
+    subgraph Host["主机系统"]
+        CPU["CPU"]
+        RC["Root Complex (根复合体)"]
+    end
+
+    CPU --> RC
+
+    RC --> DS1["Downstream Port"]
+    RC --> DS2["Downstream Port"]
+    RC --> DS3["Downstream Port"]
+
+    DS1 --> EP1["Endpoint (GPU)"]
+    DS2 --> SW["Switch"]
+    DS3 --> EP2["Endpoint (NVMe)"]
+
+    SW --> EP3["Endpoint (NIC)"]
+    SW --> EP4["Endpoint (SSD)"]
+```
+
+### 2.2 Root Complex (根复合体) 详解
+
+#### 2.2.1 什么是 Root Complex
+
+**Root Complex (RC)** 是 PCIe 架构中的核心组件，是 **CPU 与 PCIe 设备之间的桥梁**。
+
+```
+CPU 想读写 PCIe 设备:
+  CPU → Memory/IO 指令 → Root Complex → 生成 TLP → 发送到 Endpoint
+
+设备想通知 CPU:
+  Endpoint → 产生中断/消息 → Root Complex → 传递给 CPU
+```
+
+**类比理解**：Root Complex 就像是一个**交通枢纽**，负责：
+- 把 CPU 的指令"翻译"成 PCIe 设备能理解的 TLP 包
+- 把设备的响应"翻译"回 CPU 能处理的数据
+- 管理整个 PCIe 总线的配置和电源
+
+#### 2.2.2 Root Complex 主要功能
+
+| 功能 | 说明 |
+|------|------|
+| **总线桥接** | 连接 CPU 总线与 PCIe 总线，进行协议转换 |
+| **事务发起** | 代表 CPU 发起 Memory Read/Write 请求 |
+| **配置管理** | 负责设备枚举、配置空间访问 |
+| **路由转发** | 将 TLP 路由到正确的目标设备 |
+| **中断处理** | 接收并传递设备中断到 CPU |
+| **电源管理** | 管理 PCIe 链路的电源状态 |
+
+#### 2.2.3 Root Complex 硬件实现
+
+Root Complex **由专门的硬件实现**，通常集成在芯片组或 CPU 内部。
+
+**硬件位置演变：**
+
+```
+传统架构 (2010年前):
+┌──────────────────────────────────────────┐
+│                 CPU                       │
+└──────────────────┬───────────────────────┘
+                   │   FSB/QPI
+┌──────────────────┴───────────────────────┐
+│            北桥 (MCH)                     │
+│     ┌─────────────────────────┐          │
+│     │     Root Complex        │ ← 硬件   │
+│     │   (Memory Controller)   │          │
+│     └─────────────────────────┘          │
+└──────────────────┬───────────────────────┘
+                   │
+              PCIe Slots
+
+现代架构 (2010年后):
+┌──────────────────────────────────────────┐
+│                 CPU (SoC)                 │
+│  ┌────────────┐  ┌─────────────────────┐ │
+│  │ CPU Cores  │  │   Root Complex      │ │ ← 集成在CPU内部
+│  │            │  │   (PCIe Controller) │ │
+│  └────────────┘  └─────────────────────┘ │
+└──────────────────┬───────────────────────┘
+                   │
+              PCIe Slots
+```
+
+**实际硬件示例：**
+
+| 厂商 | 产品 | Root Complex 实现 |
+|------|------|-------------------|
+| **Intel** | Core i 系列 | 集成在 CPU (PCH 辅助) |
+| **AMD** | Ryzen/EPYC | 集成在 CPU (IO Die) |
+| **ARM** | 服务器芯片 | 集成在 SoC |
+| **Apple** | M 系列 | 集成在 SoC |
+
+#### 2.2.4 Root Complex 硬件组成
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  Root Complex 硬件                  │
+├─────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │
+│  │ PCIe 控制器 │  │ 路由引擎   │  │ 配置空间  │  │
+│  │ (PHY + MAC)│  │ (Routing)  │  │ 管理      │  │
+│  └─────────────┘  └─────────────┘  └────────────┘  │
+│                                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │
+│  │ TLP 生成/   │  │ 流控制     │  │ 电源管理  │  │
+│  │ 解析引擎   │  │ 管理器     │  │ 控制器    │  │
+│  └─────────────┘  └─────────────┘  └────────────┘  │
+│                                                     │
+│  ┌─────────────┐  ┌─────────────┐                  │
+│  │ 中断控制器 │  │ DMA 引擎   │                  │
+│  │ (MSI/INTx) │  │ (可选)     │                  │
+│  └─────────────┘  └─────────────┘                  │
+└─────────────────────────────────────────────────────┘
+```
+
+#### 2.2.5 为什么 Root Complex 需要硬件实现
+
+| 原因 | 说明 |
+|------|------|
+| **性能** | 硬件处理 TLP 封装/解析比软件快几个数量级 |
+| **时序** | PCIe 链路训练有严格的时序要求（微秒级） |
+| **可靠性** | 硬件实现 CRC、Ack/Nak 等可靠性机制 |
+| **并行性** | 硬件可同时处理多个 PCIe 事务 |
+
+**总结**：Root Complex 是一个实打实的硬件模块，不是软件抽象。它在芯片内部占用真实的硅片面积，有自己的时钟、电源域和寄存器配置空间。
+
+---
+
+## 3. PCIe 初始化时序图
+
+### 3.1 完整初始化流程
 
 ```mermaid
 sequenceDiagram
@@ -51,7 +185,7 @@ sequenceDiagram
     EP->>RC: 设备就绪
 ```
 
-### 2.2 链路训练状态机 (LTSSM)
+### 3.2 链路训练状态机 (LTSSM)
 
 ```mermaid
 stateDiagram-v2
@@ -73,9 +207,9 @@ stateDiagram-v2
 
 ---
 
-## 3. PCIe 数据读操作时序图
+## 4. PCIe 数据读操作时序图
 
-### 3.1 Memory Read 操作
+### 4.1 Memory Read 操作
 
 ```mermaid
 sequenceDiagram
@@ -109,7 +243,7 @@ sequenceDiagram
     EP->>RC: 更新发送信用
 ```
 
-### 3.2 Memory Read 详细时序参数
+### 4.2 Memory Read 详细时序参数
 
 | 阶段 | 典型延迟 | 说明 |
 |------|----------|------|
@@ -120,9 +254,9 @@ sequenceDiagram
 
 ---
 
-## 4. PCIe 数据写操作时序图
+## 5. PCIe 数据写操作时序图
 
-### 4.1 Memory Write 操作 (Posted)
+### 5.1 Memory Write 操作 (Posted)
 
 ```mermaid
 sequenceDiagram
@@ -153,7 +287,7 @@ sequenceDiagram
     Note over Host: CPU可立即继续执行
 ```
 
-### 4.2 Memory Write 操作 (Non-Posted)
+### 5.2 Memory Write 操作 (Non-Posted)
 
 ```mermaid
 sequenceDiagram
@@ -176,7 +310,7 @@ sequenceDiagram
     RC->>EP: Ack DLLP
 ```
 
-### 4.3 读写 IO 时序流程总结
+### 5.3 读写 IO 时序流程总结
 
 #### 4.3.1 读操作简化时序图
 
@@ -189,7 +323,7 @@ sequenceDiagram
     Host->>RC: CPU Read Request
     RC->>EP: Memory Read TLP (请求者ID, 地址, 长度)
 
-    Note right of EP: 解析TLP<br/>读取本地存储
+    Note right of EP: 解析TLP, 读取本地存储
 
     EP->>RC: Completion TLP (数据)
     RC->>EP: Ack DLLP (确认收到)
@@ -213,7 +347,7 @@ sequenceDiagram
     RC->>EP: Memory Write TLP (地址, 数据)
     Host-->>Host: CPU 立即继续执行
 
-    Note right of EP: 校验CRC<br/>写入存储
+    Note right of EP: 校验CRC, 写入存储
 
     EP->>RC: Ack DLLP (确认接收)
 ```
@@ -234,7 +368,7 @@ sequenceDiagram
     Host->>RC: CPU Write Request
     RC->>EP: Memory Write TLP (地址, 数据, Tag)
 
-    Note right of EP: 校验CRC<br/>写入存储
+    Note right of EP: 校验CRC, 写入存储
 
     EP->>RC: Completion TLP (确认写入完成)
     RC->>Host: 通知CPU写入完成
@@ -266,9 +400,9 @@ Non-Posted写：发数据 → 等Completion → 通知完成
 
 ---
 
-## 5. PCIe 配置读写时序流程
+## 6. PCIe 配置读写时序流程
 
-### 5.1 配置空间概述
+### 6.1 配置空间概述
 
 PCIe 配置空间用于设备枚举、资源分配和功能配置：
 - **配置空间大小**：每个 Function 4KB（PCIe 扩展）
@@ -276,7 +410,7 @@ PCIe 配置空间用于设备枚举、资源分配和功能配置：
 - **事务类型**：始终为 **Non-Posted**（必须等待 Completion）
 - **地址格式**：Bus + Device + Function + Register Offset
 
-### 5.2 配置读操作时序图
+### 6.2 配置读操作时序图
 
 ```mermaid
 sequenceDiagram
@@ -287,14 +421,14 @@ sequenceDiagram
     CPU->>RC: Config Read Request (Bus/Dev/Func/Reg)
     RC->>EP: Config Read TLP (Type0/Type1)
 
-    Note right of EP: 解析配置请求<br/>读取配置寄存器
+    Note right of EP: 解析配置请求, 读取配置寄存器
 
     EP->>RC: Completion TLP (配置数据)
     RC->>EP: Ack DLLP
     RC->>CPU: 返回配置数据
 ```
 
-### 5.3 配置写操作时序图
+### 6.3 配置写操作时序图
 
 ```mermaid
 sequenceDiagram
@@ -305,14 +439,14 @@ sequenceDiagram
     CPU->>RC: Config Write Request (Bus/Dev/Func/Reg, Data)
     RC->>EP: Config Write TLP (Type0/Type1, Data)
 
-    Note right of EP: 解析配置请求<br/>写入配置寄存器
+    Note right of EP: 解析配置请求, 写入配置寄存器
 
     EP->>RC: Completion TLP (写入确认)
     RC->>EP: Ack DLLP
     RC->>CPU: 配置写入完成
 ```
 
-### 5.4 配置 TLP 类型
+### 6.4 配置 TLP 类型
 
 | TLP 类型 | 适用场景 | 说明 |
 |----------|----------|------|
@@ -333,7 +467,7 @@ Type 1 配置请求地址格式 (包含完整路由):
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 5.5 配置读写与 Memory 读写对比
+### 6.5 配置读写与 Memory 读写对比
 
 | 特性 | 配置读写 | Memory 读写 |
 |------|----------|-------------|
@@ -345,7 +479,7 @@ Type 1 配置请求地址格式 (包含完整路由):
 | **路由方式** | Bus/Device/Function | Memory 地址 |
 | **超时处理** | 返回错误值 | 重试机制 |
 
-### 5.6 配置访问典型场景
+### 6.6 配置访问典型场景
 
 ```mermaid
 sequenceDiagram
@@ -378,9 +512,9 @@ sequenceDiagram
 
 ---
 
-## 6. PCIe 数据传输流程图
+## 7. PCIe 数据传输流程图
 
-### 6.1 TLP 包结构与传输
+### 7.1 TLP 包结构与传输
 
 ```mermaid
 flowchart TB
@@ -408,7 +542,7 @@ flowchart TB
     end
 ```
 
-### 6.2 数据链路层确认机制
+### 7.2 数据链路层确认机制
 
 ```mermaid
 sequenceDiagram
@@ -433,7 +567,7 @@ sequenceDiagram
 
 ---
 
-## 7. PCIe 流控制时序图
+## 8. PCIe 流控制时序图
 
 ```mermaid
 sequenceDiagram
@@ -466,9 +600,9 @@ sequenceDiagram
 
 ---
 
-## 8. PCIe 电源管理与退出时序图
+## 9. PCIe 电源管理与退出时序图
 
-### 8.1 进入低功耗状态 (ASPM L1)
+### 9.1 进入低功耗状态 (ASPM L1)
 
 ```mermaid
 sequenceDiagram
@@ -491,7 +625,7 @@ sequenceDiagram
     Note over RC,EP: L1 状态 (低功耗)
 ```
 
-### 8.2 从低功耗状态唤醒
+### 9.2 从低功耗状态唤醒
 
 ```mermaid
 sequenceDiagram
@@ -519,7 +653,7 @@ sequenceDiagram
 
 ---
 
-## 9. PCIe 正常退出流程
+## 10. PCIe 正常退出流程
 
 ```mermaid
 sequenceDiagram
@@ -551,9 +685,9 @@ sequenceDiagram
 
 ---
 
-## 10. PCIe 异常处理时序图
+## 11. PCIe 异常处理时序图
 
-### 10.1 错误检测与恢复
+### 11.1 错误检测与恢复
 
 ```mermaid
 sequenceDiagram
@@ -582,7 +716,7 @@ sequenceDiagram
     end
 ```
 
-### 10.2 致命错误处理
+### 11.2 致命错误处理
 
 ```mermaid
 flowchart TD
@@ -609,7 +743,7 @@ flowchart TD
 
 ---
 
-## 11. 完整的 PCIe 操作时序总结
+## 12. 完整的 PCIe 操作时序总结
 
 | 操作类型 | Posted | 完成时间 | 可靠性机制 |
 |----------|--------|----------|------------|
@@ -622,9 +756,9 @@ flowchart TD
 
 ---
 
-## 12. 时序参数参考
+## 13. 时序参数参考
 
-### 12.1 链路训练时序
+### 13.1 链路训练时序
 
 | 参数 | PCIe 3.0 | PCIe 4.0 | PCIe 5.0 |
 |------|----------|----------|----------|
@@ -632,7 +766,7 @@ flowchart TD
 | 典型训练时间 | 50-100ms | 50-100ms | 50-100ms |
 | Recovery时间 | 1-10ms | 1-10ms | 1-10ms |
 
-### 12.2 数据传输时序
+### 13.2 数据传输时序
 
 | 参数 | PCIe 3.0 x16 | PCIe 4.0 x16 | PCIe 5.0 x16 |
 |------|--------------|--------------|--------------|
