@@ -124,8 +124,8 @@ struct vring_used {
 ```mermaid
 sequenceDiagram
     participant Driver as Virtio-blk Driver
-    participant Device as Virtio Device
-    participant Backend as Backend (SPDK/QEMU)
+    participant Device as Virtio Device (QEMU)
+    participant Backend as Backend (SPDK)
 
     Note over Driver,Backend: Phase 1: 设备发现
     Driver->>Device: 设备扫描 (PCI/vhost-user)
