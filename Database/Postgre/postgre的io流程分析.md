@@ -465,17 +465,17 @@ sequenceDiagram
     Backend->>XLogIns: 4. XLogInsert(rmid, info)
     
     XLogIns->>Assemble: 5. XLogRecordAssemble()
-    Note over Assemble: 组装 XLogRecData 链<br/>计算 CRC<br/>处理 Full Page Writes
+    Note over Assemble: 组装 XLogRecData 链 计算 CRC 处理 Full Page Writes
     Assemble-->>XLogIns: 6. 返回 rdt 链
     
     XLogIns->>InsertRec: 7. XLogInsertRecord(rdt)
     
     loop 直到成功
         InsertRec->>Advance: 8. AdvanceXLInsertBuffer()
-        Note over Advance: 获取 WAL buffer 空间<br/>如果 buffer 脏则写出
+        Note over Advance: 获取 WAL buffer 空间 如果 buffer 脏则写出
         
         InsertRec->>InsertRec: 9. 复制数据到 WAL buffer
-        Note over InsertRec: 计算 CRC<br/>设置记录头
+        Note over InsertRec: 计算 CRC 设置记录头
         
         InsertRec-->>XLogIns: 10. 返回 EndPos
     end
@@ -556,7 +556,7 @@ sequenceDiagram
             end
             
             Advance->>Advance: 8. 初始化新页 header
-            Note over Advance: 设置 page header<br/>pd_lsn = 当前位置
+            Note over Advance: 设置 page header pd_lsn = 当前位置
         end
     end
     
@@ -593,7 +593,7 @@ sequenceDiagram
         XLogWrite->>XLogWrite: 7. 累积要写的页数
         
         alt 达到写入条件
-            Note over XLogWrite: 最后一次迭代<br/>或缓存区边界<br/>或段边界
+            Note over XLogWrite: 最后一次迭代 或缓存区边界 或段边界
             
             XLogWrite->>File: 8. write(wal_buffers + start, npages * 8KB)
             File->>Disk: 系统调用
@@ -713,7 +713,7 @@ void WalWriterMain(const void *startup_data, size_t startup_data_len)
 ```mermaid
 sequenceDiagram
     participant Main as CheckpointerMain
-    participant Create as DoCheckPoint
+    participant Ckpt as DoCheckPoint
     participant Pre as SyncPreCheckpoint
     participant BufSync as BufferSync
     participant WriteDelay as CheckpointWriteDelay
@@ -725,19 +725,19 @@ sequenceDiagram
         Main->>Main: 1. 等待 checkpoint 请求或超时
         
         alt 收到请求
-            Main->>Create: 2. DoCheckPoint(flags)
+            Main->>Ckpt: 2. DoCheckPoint(flags)
             
-            Create->>Pre: 3. SyncPreCheckpoint()
+            Ckpt->>Pre: 3. SyncPreCheckpoint()
             Note over Pre: 让 smgr 准备
             
-            Create->>Create: 4. 进入临界区
-            Create->>Create: 5. 获取 REDO 指针
-            Note over Create: WAL 位置，恢复起点
+            Ckpt->>Ckpt: 4. 进入临界区
+            Ckpt->>Ckpt: 5. 获取 REDO 指针
+            Note over Ckpt: WAL 位置，恢复起点
             
-            Create->>Create: 6. 确定 checkpoint 字段
-            Note over Create: ThisTimeLineID<br/>fullPageWrites<br/>redo<br/>oldestActiveXid
+            Ckpt->>Ckpt: 6. 确定 checkpoint 字段
+            Note over Ckpt: ThisTimeLineID fullPageWrites redo oldestActiveXid
             
-            Create->>BufSync: 7. BufferSync(flags)
+            Ckpt->>BufSync: 7. BufferSync(flags)
             
             BufSync->>BufSync: Phase 1: 扫描标记脏页
             Note over BufSync: 设置 BM_CHECKPOINT_NEEDED
@@ -748,26 +748,26 @@ sequenceDiagram
             loop Phase 3: 写入脏页
                 BufSync->>Disk: 写入一批脏页
                 BufSync->>WriteDelay: CheckpointWriteDelay()
-                Note over WriteDelay: 速率限制<br/>允许其他后端继续
+                Note over WriteDelay: 速率限制 允许其他后端继续
             end
             
-            BufSync-->>Create: 8. 返回
+            BufSync-->>Ckpt: 8. 返回
             
-            Create->>WAL: 9. XLogBeginInsert()
-            Create->>WAL: 10. XLogRegisterData(checkpoint)
-            Create->>WAL: 11. XLogInsert(XLOG_CHECKPOINT)
-            WAL-->>Create: 12. 返回 LSN
+            Ckpt->>WAL: 9. XLogBeginInsert()
+            Ckpt->>WAL: 10. XLogRegisterData(checkpoint)
+            Ckpt->>WAL: 11. XLogInsert(XLOG_CHECKPOINT)
+            WAL-->>Ckpt: 12. 返回 LSN
             
-            Create->>WAL: 13. XLogFlush(checkpoint_lsn)
+            Ckpt->>WAL: 13. XLogFlush(checkpoint_lsn)
             Note over WAL: 确保 checkpoint WAL 持久化
             
-            Create->>Create: 14. 更新控制文件
-            Note over Create: 记录 checkpoint 位置
+            Ckpt->>Ckpt: 14. 更新控制文件
+            Note over Ckpt: 记录 checkpoint 位置
             
-            Create->>Post: 15. SyncPostCheckpoint()
+            Ckpt->>Post: 15. SyncPostCheckpoint()
             Note over Post: 处理 fsync 请求
             
-            Create-->>Main: 16. 完成
+            Ckpt-->>Main: 16. 完成
         end
     end
 ```
@@ -790,7 +790,7 @@ sequenceDiagram
         alt BM_DIRTY && BM_PERMANENT
             Scan->>Scan: 3a. 设置 BM_CHECKPOINT_NEEDED
             Scan->>Scan: 4a. 记录到 CkptBufferIds[]
-            Note over Scan: buf_id, tsId, relNumber<br/>forkNum, blockNum
+            Note over Scan: buf_id, tsId, relNumber forkNum, blockNum
         else 非脏页或临时表
             Note over Scan: 3b. 跳过
         end
@@ -803,7 +803,7 @@ sequenceDiagram
     BufSync->>Sort: 7. Phase 2: 排序
     
     Sort->>Sort: 8. qsort(CkptBufferIds)
-    Note over Sort: 按表空间 → 关系 → 分支 → 块号排序<br/>优化顺序 IO
+    Note over Sort: 按表空间 → 关系 → 分支 → 块号排序 优化顺序 IO
     
     Sort-->>BufSync: 9. 排序完成
     
