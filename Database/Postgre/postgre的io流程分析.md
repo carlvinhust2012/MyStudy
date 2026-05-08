@@ -713,7 +713,7 @@ void WalWriterMain(const void *startup_data, size_t startup_data_len)
 ```mermaid
 sequenceDiagram
     participant Main as CheckpointerMain
-    participant Create as CreateCheckPoint
+    participant Create as DoCheckPoint
     participant Pre as SyncPreCheckpoint
     participant BufSync as BufferSync
     participant WriteDelay as CheckpointWriteDelay
@@ -725,7 +725,7 @@ sequenceDiagram
         Main->>Main: 1. 等待 checkpoint 请求或超时
         
         alt 收到请求
-            Main->>Create: 2. CreateCheckPoint(flags)
+            Main->>Create: 2. DoCheckPoint(flags)
             
             Create->>Pre: 3. SyncPreCheckpoint()
             Note over Pre: 让 smgr 准备
