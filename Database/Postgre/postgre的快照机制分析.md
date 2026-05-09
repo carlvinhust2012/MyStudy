@@ -169,7 +169,7 @@ sequenceDiagram
 
     loop 每个活跃进程
         Backend->>ProcArray: 获取 pgxact->xid
-        Backend->>Snap: 添加到 xip[]
+        Backend->>Snap: 添加到 xip数组
     end
 
     Backend->>XidGen: 4. 获取 ShmemVariableCache->nextXid
@@ -181,7 +181,7 @@ sequenceDiagram
     Backend->>ProcArray: 6. 释放锁
 
     Backend->>Backend: 7. 快照获取完成
-    Note over Snap: xmin, xmax, xip[] 已填充
+    Note over Snap: xmin, xmax, xip数组已填充
 ```
 
 ### 4.2 快照获取代码流程
@@ -227,7 +227,7 @@ flowchart TD
     CheckXmin -->|否| CheckXmax{t_xmin >= snapshot.xmax?}
     
     CheckXmax -->|是| Invisible1[未来事务，不可见]
-    CheckXmax -->|否| CheckXip{t_xmin in xip[]?}
+    CheckXmax -->|否| CheckXip{t_xmin in 活跃事务列表?}
     
     CheckXip -->|是| Invisible2[活跃事务，不可见]
     CheckXip -->|否| CheckCommitted{t_xmin 已提交?}
@@ -236,7 +236,7 @@ flowchart TD
     CheckCommitted -->|是| CheckXmaxNull{t_xmax 为空?}
     
     CheckXmaxNull -->|是| Visible2[未删除，可见]
-    CheckXmaxNull -->|否| CheckXmaxXip{t_xmax in xip[]?}
+    CheckXmaxNull -->|否| CheckXmaxXip{t_xmax in 活跃事务列表?}
     
     CheckXmaxXip -->|是| Visible3[删除未提交，可见]
     CheckXmaxXip -->|否| CheckXmaxCommitted{t_xmax 已提交?}
