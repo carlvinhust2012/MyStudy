@@ -881,7 +881,7 @@ sequenceDiagram
     participant EO as erasureObjects
     participant Good as Disk 0~9 (正常)
     participant Rot as Disk 10 (Bitrot)
-    participant Off as Disk 11~15 (离线)
+    participant Down as Disk 11~15 (离线)
 
     C->>EO: GET object
 
@@ -890,7 +890,7 @@ sequenceDiagram
     par 读取 xl.meta
         EO->>Good: ReadXL() ✅
         EO->>Rot: ReadXL() ✅ (元数据完好)
-        EO->>Off: ReadXL() ❌
+        EO->>Down: ReadXL() ❌
     end
 
     EO->>EO: 版本合并 → V2 有效
