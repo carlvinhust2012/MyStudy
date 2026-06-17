@@ -520,34 +520,34 @@ sequenceDiagram
 
     Note over Client: COMMIT
 
-    subgraph Phase1_Prewrite
-        Client->>TiKV1: Prewrite(primary=id=1, start_ts=100)
-        Note over TiKV1: 升级悲观锁为预写锁
-        Note over TiKV1: CF_DEFAULT: 写入 key+start_ts(100)
-        Note over TiKV1: CF_LOCK: 更新 Lock{type=Put}
-        TiKV1-->>Client: Prewrite OK (primary)
+    Note over Client,TiKV2: Phase 1 - Prewrite
 
-        Client->>TiKV2: Prewrite(secondary=idx_name, start_ts=100)
-        Note over TiKV2: CF_DEFAULT: 写入 index data
-        Note over TiKV2: CF_LOCK: 写入 secondary lock
-        TiKV2-->>Client: Prewrite OK (secondary)
-    end
+    Client->>TiKV1: Prewrite(primary=id=1, start_ts=100)
+    Note over TiKV1: 升级悲观锁为预写锁
+    Note over TiKV1: CF_DEFAULT: 写入 key+start_ts(100)
+    Note over TiKV1: CF_LOCK: 更新 Lock{type=Put}
+    TiKV1-->>Client: Prewrite OK (primary)
+
+    Client->>TiKV2: Prewrite(secondary=idx_name, start_ts=100)
+    Note over TiKV2: CF_DEFAULT: 写入 index data
+    Note over TiKV2: CF_LOCK: 写入 secondary lock
+    TiKV2-->>Client: Prewrite OK (secondary)
 
     Client->>PD: 获取 commit_ts
     PD-->>Client: commit_ts = 101
 
-    subgraph Phase2_Commit
-        Client->>TiKV1: Commit(primary=id=1, commit_ts=101)
-        Note over TiKV1: CF_WRITE: Write{Put, start_ts=100}
-        Note over TiKV1: CF_LOCK: 删除 primary lock
-        TiKV1-->>Client: Commit OK (primary)
+    Note over Client,TiKV2: Phase 2 - Commit
 
-        Note over Client: 异步提交 secondary
-        Client->>TiKV2: Commit(secondary=idx_name, commit_ts=101)
-        Note over TiKV2: CF_WRITE: Write{Put, start_ts=100}
-        Note over TiKV2: CF_LOCK: 删除 secondary lock
-        TiKV2-->>Client: Commit OK
-    end
+    Client->>TiKV1: Commit(primary=id=1, commit_ts=101)
+    Note over TiKV1: CF_WRITE: Write{Put, start_ts=100}
+    Note over TiKV1: CF_LOCK: 删除 primary lock
+    TiKV1-->>Client: Commit OK (primary)
+
+    Note over Client: 异步提交 secondary
+    Client->>TiKV2: Commit(secondary=idx_name, commit_ts=101)
+    Note over TiKV2: CF_WRITE: Write{Put, start_ts=100}
+    Note over TiKV2: CF_LOCK: 删除 secondary lock
+    TiKV2-->>Client: Commit OK
 ```
 
 ### 5.4 乐观事务写入时序图
@@ -569,35 +569,35 @@ sequenceDiagram
 
     Note over Client: COMMIT
 
-    subgraph Phase1_Prewrite
-        Client->>TiKV1: Prewrite(primary=id=1, start_ts=100)
-        Note over TiKV1: 检查 CF_LOCK: 无冲突?
-        Note over TiKV1: 检查 CF_WRITE: 无写冲突?
-        Note over TiKV1: CF_DEFAULT: 写入 value
-        Note over TiKV1: CF_LOCK: 写入 Lock{type=Put, primary=id=1}
-        TiKV1-->>Client: Prewrite OK
+    Note over Client,TiKV2: Phase 1 - Prewrite
 
-        Client->>TiKV2: Prewrite(secondary keys)
-        Note over TiKV2: 同样检查 + 写入
-        TiKV2-->>Client: Prewrite OK
+    Client->>TiKV1: Prewrite(primary=id=1, start_ts=100)
+    Note over TiKV1: 检查 CF_LOCK: 无冲突?
+    Note over TiKV1: 检查 CF_WRITE: 无写冲突?
+    Note over TiKV1: CF_DEFAULT: 写入 value
+    Note over TiKV1: CF_LOCK: 写入 Lock{type=Put, primary=id=1}
+    TiKV1-->>Client: Prewrite OK
 
-        alt 冲突发生
-            TiKV1-->>Client: WriteConflict Error
-            Note over Client: 回滚 + 重试整个事务
-        end
+    Client->>TiKV2: Prewrite(secondary keys)
+    Note over TiKV2: 同样检查 + 写入
+    TiKV2-->>Client: Prewrite OK
+
+    alt 冲突发生
+        TiKV1-->>Client: WriteConflict Error
+        Note over Client: 回滚 + 重试整个事务
     end
 
     Client->>PD: 获取 commit_ts
     PD-->>Client: commit_ts = 101
 
-    subgraph Phase2_Commit
-        Client->>TiKV1: Commit(primary, commit_ts=101)
-        Note over TiKV1: CF_WRITE + 删除 Lock
-        TiKV1-->>Client: OK
+    Note over Client,TiKV2: Phase 2 - Commit
 
-        Client->>TiKV2: Commit(secondary, commit_ts=101)
-        TiKV2-->>Client: OK
-    end
+    Client->>TiKV1: Commit(primary, commit_ts=101)
+    Note over TiKV1: CF_WRITE + 删除 Lock
+    TiKV1-->>Client: OK
+
+    Client->>TiKV2: Commit(secondary, commit_ts=101)
+    TiKV2-->>Client: OK
 ```
 
 ### 5.5 提交优化：Async Commit 与 1PC
