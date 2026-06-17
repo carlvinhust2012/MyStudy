@@ -419,16 +419,16 @@ sequenceDiagram
     Client->>TiKV: Get(key, start_ts=150)
     TiKV->>MvccR: get(key, ts=150)
 
-    Step1: 检查锁
+    Note over MvccR: Step1: 检查锁
     MvccR->>CF_L: load_lock(key)
     CF_L-->>MvccR: nil (无冲突锁)
 
-    Step2: 查找可见版本
+    Note over MvccR: Step2: 查找可见版本
     MvccR->>CF_W: seek_write(key, ts=150)
     Note over CF_W: 按commit_ts降序扫描
     CF_W-->>MvccR: Write{type=Put, start_ts=100, commit_ts=101}
 
-    Step3: 加载数据
+    Note over MvccR: Step3: 加载数据
     alt short_value 存在
         MvccR-->>MvccR: 直接返回 short_value
     else short_value 为 nil
@@ -501,11 +501,11 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client as TiDB Client
-    participant PD as PD (TSO)
-    participant TiKV1 as TiKV (Region A)
-    participant TiKV2 as TiKV (Region B)
+    participant PD as PD_TSO
+    participant TiKV1 as TiKV_RegionA
+    participant TiKV2 as TiKV_RegionB
 
-    Note over Client: BEGIN (悲观模式)
+    Note over Client: BEGIN_悲观模式
 
     Client->>PD: 获取 start_ts
     PD-->>Client: start_ts = 100
@@ -520,7 +520,7 @@ sequenceDiagram
 
     Note over Client: COMMIT
 
-    subgraph Phase 1: Prewrite
+    subgraph Phase1_Prewrite
         Client->>TiKV1: Prewrite(primary=id=1, start_ts=100)
         Note over TiKV1: 升级悲观锁为预写锁
         Note over TiKV1: CF_DEFAULT: 写入 key+start_ts(100)
@@ -536,7 +536,7 @@ sequenceDiagram
     Client->>PD: 获取 commit_ts
     PD-->>Client: commit_ts = 101
 
-    subgraph Phase 2: Commit
+    subgraph Phase2_Commit
         Client->>TiKV1: Commit(primary=id=1, commit_ts=101)
         Note over TiKV1: CF_WRITE: Write{Put, start_ts=100}
         Note over TiKV1: CF_LOCK: 删除 primary lock
@@ -555,11 +555,11 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client as TiDB Client
-    participant PD as PD (TSO)
-    participant TiKV1 as TiKV (Region A)
-    participant TiKV2 as TiKV (Region B)
+    participant PD as PD_TSO
+    participant TiKV1 as TiKV_RegionA
+    participant TiKV2 as TiKV_RegionB
 
-    Note over Client: BEGIN (乐观模式)
+    Note over Client: BEGIN_乐观模式
 
     Client->>PD: 获取 start_ts
     PD-->>Client: start_ts = 100
@@ -569,7 +569,7 @@ sequenceDiagram
 
     Note over Client: COMMIT
 
-    subgraph Phase 1: Prewrite
+    subgraph Phase1_Prewrite
         Client->>TiKV1: Prewrite(primary=id=1, start_ts=100)
         Note over TiKV1: 检查 CF_LOCK: 无冲突?
         Note over TiKV1: 检查 CF_WRITE: 无写冲突?
@@ -590,7 +590,7 @@ sequenceDiagram
     Client->>PD: 获取 commit_ts
     PD-->>Client: commit_ts = 101
 
-    subgraph Phase 2: Commit
+    subgraph Phase2_Commit
         Client->>TiKV1: Commit(primary, commit_ts=101)
         Note over TiKV1: CF_WRITE + 删除 Lock
         TiKV1-->>Client: OK
