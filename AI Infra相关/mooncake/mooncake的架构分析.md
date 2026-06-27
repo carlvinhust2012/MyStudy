@@ -129,15 +129,6 @@ flowchart LR
   Connectors -->|invoke Put/Get/Upsert| Master
   Connectors -->|call TransferSubmitter| TransferSubmitter
   Allocator -->|select devices / topology| TE
-
-  %% notes
-  classDef ctrl fill:#f9f,stroke:#333,stroke-width:1px;
-  class Master,HTTPMeta,HA ctrl;
-  classDef data fill:#cff,stroke:#333;
-  class TE,TransferSubmitter,Transport data;
-  classDef store fill:#cfc,stroke:#333;
-  class StoreWorker,StorageBackend,LocalHotCache store;
-  class Integration,Connectors,Allocator fill:#ffd,stroke:#333;
 ```
 
 ---
