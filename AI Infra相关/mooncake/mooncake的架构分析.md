@@ -91,7 +91,7 @@ flowchart LR
   end
 
   subgraph TransferPlane
-    TE[Transfer Engine (TE)]
+    TE[Transfer Engine - TE]
     Transport[Transports - RDMA / TCP / NVMe-oF / NVLink / NOF / CXL]
     TransferSubmitter[TransferSubmitter]
   end
