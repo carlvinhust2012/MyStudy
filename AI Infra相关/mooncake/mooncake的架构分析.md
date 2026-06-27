@@ -78,8 +78,8 @@ flowchart LR
   end
 
   subgraph ControlPlane
-    Master[Master (metadata, replica manager)]
-    HA[HA Backend<br/>(etcd / K8s Lease)]
+    Master[Master - metadata, replica manager]
+    HA[HA Backend - etcd / K8s Lease]
     HTTPMeta[HTTP Metadata Server]
   end
 
@@ -102,7 +102,7 @@ flowchart LR
   end
 
   subgraph Integration
-    Connectors[Mooncake Connectors<br/>(vLLM, SGLang, LMCache)]
+    Connectors[Mooncake Connectors - vLLM, SGLang, LMCache]
     Allocator[Allocator / fabric utils]
   end
 
