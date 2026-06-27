@@ -22,7 +22,7 @@ sequenceDiagram
   end
   TE-->>Client: future->get() (blocks until transfer completes)
   Client->>HotCache: (optional) ProcessSlicesAsync -> submit async put to hot cache
-  Client->>Client: Check lease TTL; return success / LEASE_EXPIRED
+  Client->>Client: return success / LEASE_EXPIRED (Check lease TTL)
   ```
 
 ### 写流程
