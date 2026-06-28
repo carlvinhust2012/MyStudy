@@ -34,7 +34,4 @@
 端到端时序（简化）
 - 上层（FileStorage/Client）决定 offload/promotion → 构建 SpdkNofTask（seg_handle + ptr + lba + lba_count） → 提交到 SpdkNofWorkerPool → Worker 分块提交 SPDK I/O 子请求 → SPDK 完成回调 → Worker 聚合结果并 set_completed → TransferFuture / higher layer 收到完成 → FileStorage 汇整 StorageObjectMetadata 并 NotifyOffloadSuccess 给 Master。
 
-
-好，我现在就按“选项 b”帮你准备一份可操作的、面向在真实机器上启用 SPDK/NOF（NVMe via SPDK）并编译 Mooncake 以支持 SPDK 的详尽指南（构建+运行时配置+调优+验证）。我把内容输出成一篇 Markdown 文档，包含命令示例与注意事项。你可以直接在节点上按步骤执行，遇到任何错误把日志贴给我，我会帮你定位问题。
-
 ---
