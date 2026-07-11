@@ -430,10 +430,8 @@ CubeFS采用**经典的分布式存储架构**：
 
 ---
 
-一个文件是被切成多个extent分片，保存到datanode节点的吗？
 
-让我查看一下CubeFS中关于extent分片的实现细节。
-
+## 一个文件是被切成多个extent分片，保存到datanode节点的吗？
 ## **是的，文件会被切成多个 Extent 分片存储到 DataNode**
 
 根据CubeFS官方文档和源代码分析，这里是完整的机制：
