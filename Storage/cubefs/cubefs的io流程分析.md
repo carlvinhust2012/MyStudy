@@ -1,4 +1,3 @@
-```markdown
 # CubeFS 读写 IO 流程详解
 
 ## 一、概述
