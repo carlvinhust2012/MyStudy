@@ -1,4 +1,4 @@
-# CubeFS 元数据布局与时序流程分析
+# CubeFS 元数据布局分析
 
 > 基于 `cubefs/metanode` 源码分析，梳理 MetaPartition 的内存布局、持久化结构以及关键操作的 Raft 共识时序。
 
