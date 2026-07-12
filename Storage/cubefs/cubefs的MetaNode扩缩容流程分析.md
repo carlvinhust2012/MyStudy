@@ -171,9 +171,9 @@ sequenceDiagram
     C->>C: metaNode.MigrateLock.Lock()
     C->>C: getAllMetaPartitionByMetaNode(srcAddr)
     Note over C: 获取待下线 MP 列表 toBeOfflineMps
-    C->>C: metaNode.ToBeOffline = true; MaxMemAvailWeight = 1
+    C->>C: metaNode.ToBeOffline = true, MaxMemAvailWeight = 1
 
-    par 并发迁移 (limit 控制)
+    par 并发迁移 - limit 控制
         loop 每个 mp
             C->>C: migrateMetaPartition(srcAddr, "", mp)
             C->>C: validateDecommissionMetaPartition(mp, srcAddr)
